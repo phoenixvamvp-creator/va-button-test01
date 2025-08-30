@@ -1,10 +1,74 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>PhoenixVA Button Test</title>
+    <title>PhoenixVA Interaction Test</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 40px;
+      }
+      button {
+        margin: 5px;
+        padding: 10px 20px;
+        font-size: 16px;
+      }
+      #output {
+        margin-top: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        min-height: 50px;
+      }
+    </style>
   </head>
   <body>
-    <h1>Hello, PhoenixVA is live!</h1>
-    <button>🎤 Speak</button>
+    <h1>Hello, PhoenixVA!</h1>
+
+    <!-- Toggle Button -->
+    <button id="toggleBtn">🎤 Toggle Conversation</button>
+
+    <!-- Press-to-Talk Button -->
+    <button id="pressBtn">🎙️ Hold to Talk</button>
+
+    <!-- Text Input -->
+    <div>
+      <input id="textInput" type="text" placeholder="Type your command here..." style="width:300px; padding:5px;" />
+      <button id="sendBtn">Send</button>
+    </div>
+
+    <p id="output">Your responses will appear here...</p>
+
+    <script>
+      const toggleBtn = document.getElementById("toggleBtn");
+      const pressBtn = document.getElementById("pressBtn");
+      const sendBtn = document.getElementById("sendBtn");
+      const textInput = document.getElementById("textInput");
+      const output = document.getElementById("output");
+
+      let recording = false;
+
+      // Toggle button logic
+      toggleBtn.onclick = () => {
+        recording = !recording;
+        toggleBtn.innerText = recording ? "🛑 Stop Conversation" : "🎤 Toggle Conversation";
+        output.innerText = recording ? "Listening..." : "Stopped.";
+      };
+
+      // Press-to-talk logic
+      pressBtn.onmousedown = () => {
+        output.innerText = "Recording (hold)...";
+      };
+      pressBtn.onmouseup = () => {
+        output.innerText = "Stopped recording.";
+      };
+
+      // Text input logic
+      sendBtn.onclick = () => {
+        const text = textInput.value;
+        if (text.trim() !== "") {
+          output.innerText = "You typed: " + text;
+          textInput.value = "";
+        }
+      };
+    </script>
   </body>
 </html>
