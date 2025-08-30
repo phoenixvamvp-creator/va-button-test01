@@ -1,5 +1,6 @@
 // api/transcribe.js
-// Receive raw audio (e.g., audio/webm) and build a proper FormData for Whisper.
+// Accepts EITHER raw audio (audio/webm, audio/mpeg, etc.) OR multipart/form-data.
+// Builds a proper FormData for Whisper when needed, proxies errors back for easy debugging.
 
 export const config = { api: { bodyParser: false } };
 
@@ -11,32 +12,48 @@ async function readRawBody(req) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
   try {
-    const contentType = req.headers['content-type'] || '';
-    if (!contentType.startsWith('audio/')) {
-      return res.status(400).json({ error: 'Expected raw audio in request body' });
+    const ct = (req.headers['content-type'] || '').toLowerCase();
+
+    let whisperBody;
+    let whisperHeaders = { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` };
+
+    if (ct.includes('multipart/form-data')) {
+      // Case A: Browser sent FormData (file + model) — pass through unchanged
+      whisperHeaders['Content-Type'] = ct; // keep the boundary GitHub/Vercel set
+      whisperBody = req; // stream through
+    } else {
+      // Case B: Browser sent RAW audio (Blob)
+      const buffer = await readRawBody(req);
+      if (!buffer?.length) {
+        return res.status(400).json({ error: 'Empty audio body', detail: 'buffer length = 0' });
+      }
+      // Node 18+ has FormData/Blob globally
+      const form = new FormData();
+      const assumedType =
+        ct && ct.startsWith('audio/') ? ct : 'audio/webm;codecs=opus';
+      const blob = new Blob([buffer], { type: assumedType });
+      form.append('file', blob, assumedType.includes('mpeg') ? 'audio.mp3' : 'audio.webm');
+      form.append('model', 'whisper-1');
+      whisperBody = form; // DO NOT set Content-Type manually; fetch sets boundary
     }
 
-    // 1) Read raw audio bytes from the request
-    const buffer = await readRawBody(req);
-
-    // 2) Build a FormData payload for OpenAI
-    // Node 18+ on Vercel exposes Blob + FormData globally
-    const form = new FormData();
-    const blob = new Blob([buffer], { type: contentType || 'audio/webm' });
-    form.append('file', blob, 'audio.webm'); // give it a filename with extension
-    form.append('model', 'whisper-1');
-
-    // 3) Send to OpenAI Whisper
     const r = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: form, // do NOT set Content-Type manually; fetch sets boundary
+      headers: whisperHeaders,
+      body: whisperBody
     });
 
-    const data = await r.json();
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
     if (!r.ok) {
-      return res.status(r.status).json({ error: data?.error || 'Whisper error' });
+      return res.status(r.status).json({
+        error: 'Whisper error',
+        detail: data?.error?.message || data?.raw || `HTTP ${r.status}`
+      });
     }
 
     return res.status(200).json({ text: data?.text || '' });
@@ -44,4 +61,3 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Transcription failed', detail: String(e) });
   }
 }
-
