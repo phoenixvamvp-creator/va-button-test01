@@ -74,11 +74,8 @@
           return;
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        try {
-          mediaRecorder = new MediaRecorder(stream, { mimeType: MIME });
-        } catch {
-          mediaRecorder = new MediaRecorder(stream);
-        }
+        try { mediaRecorder = new MediaRecorder(stream, { mimeType: MIME }); }
+        catch { mediaRecorder = new MediaRecorder(stream); }
         audioChunks = [];
         mediaRecorder.ondataavailable = e => e.data.size && audioChunks.push(e.data);
         mediaRecorder.onstop = onStopped;
@@ -98,10 +95,14 @@
         output.textContent = 'Transcribing…';
 
         try {
+          // Multipart from browser
+          const form = new FormData();
+          form.append('file', blob, 'audio.webm');
+          form.append('model', 'whisper-1');
+
           const tr = await fetch('/api/transcribe', {
             method: 'POST',
-            headers: { 'Content-Type': 'audio/webm' }, // server handles both raw & multipart
-            body: blob
+            body: form
           });
 
           const tdata = await tr.json();
