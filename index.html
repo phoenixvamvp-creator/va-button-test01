@@ -11,6 +11,7 @@
       button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
+      #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; }
     </style>
   </head>
   <body>
@@ -29,6 +30,7 @@
     </div>
 
     <div id="output">Ready.</div>
+    <div id="diag"></div>
 
     <script>
       const pressBtn  = document.getElementById('pressBtn');
@@ -36,6 +38,7 @@
       const textInput = document.getElementById('textInput');
       const output    = document.getElementById('output');
       const statusEl  = document.getElementById('status');
+      const diag      = document.getElementById('diag');
 
       // ----- Text → Chat -----
       async function sendMessage(msg) {
@@ -63,51 +66,76 @@
 
       // ----- Voice (press-and-hold) → Whisper → Chat -----
       let mediaRecorder, audioChunks = [];
+      const MIME = 'audio/webm;codecs=opus';
 
       async function startRecording() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          output.textContent = 'This browser does not support microphone capture.';
+          return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
+        try {
+          mediaRecorder = new MediaRecorder(stream, { mimeType: MIME });
+        } catch {
+          mediaRecorder = new MediaRecorder(stream);
+        }
         audioChunks = [];
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-          // Build a single Blob of audio and send RAW to backend.
-          const blob = new Blob(audioChunks, { type: 'audio/webm' });
-          statusEl.textContent = 'Transcribing…';
-          output.textContent = 'Transcribing…';
-
-          try {
-            // Send RAW audio; backend will construct FormData for Whisper.
-            const tr = await fetch('/api/transcribe', {
-              method: 'POST',
-              headers: { 'Content-Type': 'audio/webm' },
-              body: blob
-            });
-            const tdata = await tr.json();
-            const text = tdata.text || '';
-            if (!text) {
-              statusEl.textContent = 'No speech detected';
-              output.textContent = 'No speech detected.';
-              return;
-            }
-
-            statusEl.textContent = 'Asking…';
-            output.textContent = 'You said: ' + text + '\nThinking…';
-
-            const cr = await fetch('/api/chat', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: text })
-            });
-            const cdata = await cr.json();
-            const reply = cdata.reply || '(no reply)';
-            output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-            statusEl.textContent = 'Ready';
-          } catch {
-            statusEl.textContent = 'Error';
-            output.textContent = 'Error during transcription or chat.';
-          }
-        };
+        mediaRecorder.ondataavailable = e => e.data.size && audioChunks.push(e.data);
+        mediaRecorder.onstop = onStopped;
         mediaRecorder.start();
+      }
+
+      async function onStopped() {
+        const blob = new Blob(audioChunks, { type: MIME });
+        diag.textContent = `Blob size: ${blob.size} bytes; type: ${blob.type}`;
+        if (!blob.size) {
+          statusEl.textContent = 'No audio captured';
+          output.textContent = 'No audio captured.';
+          return;
+        }
+
+        statusEl.textContent = 'Transcribing…';
+        output.textContent = 'Transcribing…';
+
+        try {
+          const tr = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'audio/webm' }, // server handles both raw & multipart
+            body: blob
+          });
+
+          const tdata = await tr.json();
+          if (!tr.ok || tdata.error) {
+            output.textContent = 'Transcription error.';
+            diag.textContent = `Blob size: ${blob.size}; Server said: ${tdata.error || ''}${tdata.detail ? '\nDetail: ' + tdata.detail : ''}`;
+            statusEl.textContent = 'Error';
+            return;
+          }
+
+          const text = tdata.text || '';
+          if (!text) {
+            statusEl.textContent = 'No speech detected';
+            output.textContent = 'No speech detected.';
+            return;
+          }
+
+          statusEl.textContent = 'Asking…';
+          output.textContent = 'You said: ' + text + '\nThinking…';
+
+          const cr = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
+          const cdata = await cr.json();
+          const reply = cdata.reply || '(no reply)';
+          output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
+          statusEl.textContent = 'Ready';
+        } catch (e) {
+          statusEl.textContent = 'Error';
+          output.textContent = 'Error during transcription or chat.';
+          diag.textContent = String(e);
+        }
       }
 
       function stopRecording() {
