@@ -2,12 +2,12 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>PhoenixVA — Voice + Text Portal</title>
+    <title>PhoenixVA — Voice + Text Portal (Mobile-friendly)</title>
     <style>
       body { font-family: system-ui, Arial, sans-serif; margin: 40px; }
       h1 { margin-top: 0; }
       #row { margin: 8px 0; }
-      input[type="text"] { width: 360px; padding: 8px; font-size: 16px; }
+      input[type="text"] { width: 360px; max-width: 100%; padding: 8px; font-size: 16px; }
       button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
@@ -40,6 +40,28 @@
       const statusEl  = document.getElementById('status');
       const diag      = document.getElementById('diag');
 
+      // Pick a MIME the device actually supports (mobile-safe)
+      const CANDIDATE_MIMES = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4;codecs=mp4a',   // common on iOS
+        'audio/mpeg'               // fallback
+      ];
+      const supported = CANDIDATE_MIMES.find(t => {
+        try { return window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }
+        catch { return false; }
+      }) || 'audio/webm';
+
+      function extFromMime(m) {
+        if (!m) return 'webm';
+        if (m.includes('mp4')) return 'mp4';
+        if (m.includes('ogg')) return 'ogg';
+        if (m.includes('mpeg')) return 'mp3';
+        return 'webm';
+      }
+      const chosenExt = extFromMime(supported);
+
       // ----- Text → Chat -----
       async function sendMessage(msg) {
         output.textContent = 'Thinking…';
@@ -66,7 +88,6 @@
 
       // ----- Voice (press-and-hold) → Whisper → Chat -----
       let mediaRecorder, audioChunks = [];
-      const MIME = 'audio/webm;codecs=opus';
 
       async function startRecording() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -74,17 +95,20 @@
           return;
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        try { mediaRecorder = new MediaRecorder(stream, { mimeType: MIME }); }
-        catch { mediaRecorder = new MediaRecorder(stream); }
+
+        try { mediaRecorder = new MediaRecorder(stream, { mimeType: supported }); }
+        catch { mediaRecorder = new MediaRecorder(stream); } // last resort
+
         audioChunks = [];
-        mediaRecorder.ondataavailable = e => e.data.size && audioChunks.push(e.data);
+        mediaRecorder.ondataavailable = e => e.data && e.data.size && audioChunks.push(e.data);
         mediaRecorder.onstop = onStopped;
         mediaRecorder.start();
+        diag.textContent = `Recorder MIME: ${supported} | ext: .${chosenExt}`;
       }
 
       async function onStopped() {
-        const blob = new Blob(audioChunks, { type: MIME });
-        diag.textContent = `Blob size: ${blob.size} bytes; type: ${blob.type}`;
+        const blob = new Blob(audioChunks, { type: supported });
+        diag.textContent += `\nBlob size: ${blob.size} bytes; type: ${blob.type}`;
         if (!blob.size) {
           statusEl.textContent = 'No audio captured';
           output.textContent = 'No audio captured.';
@@ -95,20 +119,17 @@
         output.textContent = 'Transcribing…';
 
         try {
-          // Multipart from browser
+          // Send as multipart so server can pass-through if needed
           const form = new FormData();
-          form.append('file', blob, 'audio.webm');
+          form.append('file', blob, `audio.${chosenExt}`);
           form.append('model', 'whisper-1');
 
-          const tr = await fetch('/api/transcribe', {
-            method: 'POST',
-            body: form
-          });
-
+          const tr = await fetch('/api/transcribe', { method: 'POST', body: form });
           const tdata = await tr.json();
+
           if (!tr.ok || tdata.error) {
             output.textContent = 'Transcription error.';
-            diag.textContent = `Blob size: ${blob.size}; Server said: ${tdata.error || ''}${tdata.detail ? '\nDetail: ' + tdata.detail : ''}`;
+            diag.textContent += `\nServer said: ${tdata.error || ''}${tdata.detail ? '\nDetail: ' + tdata.detail : ''}`;
             statusEl.textContent = 'Error';
             return;
           }
@@ -135,7 +156,7 @@
         } catch (e) {
           statusEl.textContent = 'Error';
           output.textContent = 'Error during transcription or chat.';
-          diag.textContent = String(e);
+          diag.textContent += `\nClient error: ${String(e)}`;
         }
       }
 
