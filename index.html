@@ -1,74 +1,53 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>PhoenixVA Interaction Test</title>
+    <meta charset="utf-8" />
+    <title>PhoenixVA — OpenAI Portal</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
-        margin: 40px;
-      }
-      button {
-        margin: 5px;
-        padding: 10px 20px;
-        font-size: 16px;
-      }
-      #output {
-        margin-top: 20px;
-        padding: 10px;
-        border: 1px solid #ddd;
-        min-height: 50px;
-      }
+      body { font-family: system-ui, Arial, sans-serif; margin: 40px; }
+      h1 { margin-top: 0; }
+      #row { margin: 8px 0; }
+      input[type="text"] { width: 360px; padding: 8px; font-size: 16px; }
+      button { padding: 10px 16px; font-size: 16px; margin-left: 6px; }
+      #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 70px; white-space: pre-wrap; }
     </style>
   </head>
   <body>
-    <h1>Hello, PhoenixVA!</h1>
+    <h1>PhoenixVA — OpenAI Portal</h1>
 
-    <!-- Toggle Button -->
-    <button id="toggleBtn">🎤 Toggle Conversation</button>
-
-    <!-- Press-to-Talk Button -->
-    <button id="pressBtn">🎙️ Hold to Talk</button>
-
-    <!-- Text Input -->
-    <div>
-      <input id="textInput" type="text" placeholder="Type your command here..." style="width:300px; padding:5px;" />
+    <div id="row">
+      <input id="textInput" type="text" placeholder="Type your message…" />
       <button id="sendBtn">Send</button>
     </div>
 
-    <p id="output">Your responses will appear here...</p>
+    <div id="output">Ready.</div>
 
     <script>
-      const toggleBtn = document.getElementById("toggleBtn");
-      const pressBtn = document.getElementById("pressBtn");
-      const sendBtn = document.getElementById("sendBtn");
-      const textInput = document.getElementById("textInput");
-      const output = document.getElementById("output");
+      const sendBtn = document.getElementById('sendBtn');
+      const textInput = document.getElementById('textInput');
+      const output = document.getElementById('output');
 
-      let recording = false;
+      async function sendMessage() {
+        const message = textInput.value.trim();
+        if (!message) return;
+        output.textContent = 'Thinking…';
+        textInput.value = '';
 
-      // Toggle button logic
-      toggleBtn.onclick = () => {
-        recording = !recording;
-        toggleBtn.innerText = recording ? "🛑 Stop Conversation" : "🎤 Toggle Conversation";
-        output.innerText = recording ? "Listening..." : "Stopped.";
-      };
-
-      // Press-to-talk logic
-      pressBtn.onmousedown = () => {
-        output.innerText = "Recording (hold)...";
-      };
-      pressBtn.onmouseup = () => {
-        output.innerText = "Stopped recording.";
-      };
-
-      // Text input logic
-      sendBtn.onclick = () => {
-        const text = textInput.value;
-        if (text.trim() !== "") {
-          output.innerText = "You typed: " + text;
-          textInput.value = "";
+        try {
+          const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+          });
+          const data = await res.json();
+          output.textContent = data.reply || data.error || '(no reply)';
+        } catch (e) {
+          output.textContent = 'Network error';
         }
-      };
+      }
+
+      sendBtn.onclick = sendMessage;
+      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
     </script>
   </body>
 </html>
