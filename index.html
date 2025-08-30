@@ -2,19 +2,26 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>PhoenixVA — OpenAI Portal</title>
+    <title>PhoenixVA — Voice + Text Portal</title>
     <style>
       body { font-family: system-ui, Arial, sans-serif; margin: 40px; }
       h1 { margin-top: 0; }
       #row { margin: 8px 0; }
       input[type="text"] { width: 360px; padding: 8px; font-size: 16px; }
-      button { padding: 10px 16px; font-size: 16px; margin-left: 6px; }
-      #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 70px; white-space: pre-wrap; }
+      button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
+      #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
     </style>
   </head>
   <body>
-    <h1>PhoenixVA — OpenAI Portal</h1>
+    <h1>PhoenixVA — Voice + Text Portal</h1>
 
+    <!-- Press-to-talk (hold) -->
+    <div id="row">
+      <button id="pressBtn">🎙️ Hold to Talk</button>
+      <span id="status" style="margin-left:8px;color:#555;"></span>
+    </div>
+
+    <!-- Type-to-send -->
     <div id="row">
       <input id="textInput" type="text" placeholder="Type your message…" />
       <button id="sendBtn">Send</button>
@@ -23,31 +30,113 @@
     <div id="output">Ready.</div>
 
     <script>
-      const sendBtn = document.getElementById('sendBtn');
-      const textInput = document.getElementById('textInput');
-      const output = document.getElementById('output');
+      const pressBtn = document.getElementById('pressBtn');
+      const sendBtn  = document.getElementById('sendBtn');
+      const textInput= document.getElementById('textInput');
+      const output   = document.getElementById('output');
+      const statusEl = document.getElementById('status');
 
-      async function sendMessage() {
-        const message = textInput.value.trim();
-        if (!message) return;
+      // ----- Text → Chat -----
+      async function sendMessage(msg) {
         output.textContent = 'Thinking…';
-        textInput.value = '';
-
         try {
           const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify({ message: msg })
           });
           const data = await res.json();
-          output.textContent = data.reply || data.error || '(no reply)';
+          output.textContent = (data.reply || data.error || '(no reply)');
         } catch (e) {
           output.textContent = 'Network error';
         }
       }
 
-      sendBtn.onclick = sendMessage;
-      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+      sendBtn.onclick = () => {
+        const msg = textInput.value.trim();
+        if (!msg) return;
+        textInput.value = '';
+        sendMessage(msg);
+      };
+      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendBtn.click(); });
+
+      // ----- Voice (press-and-hold) → Whisper → Chat -----
+      let mediaRecorder, audioChunks = [];
+
+      async function startRecording() {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        mediaRecorder.onstop = async () => {
+          // Build form data: file + model
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const form = new FormData();
+          form.append('file', blob, 'audio.webm');
+          form.append('model', 'whisper-1');
+
+          statusEl.textContent = 'Transcribing…';
+          output.textContent = 'Transcribing…';
+
+          try {
+            const tr = await fetch('/api/transcribe', { method: 'POST', body: form });
+            const tdata = await tr.json();
+            const text = tdata.text || '';
+            if (!text) {
+              statusEl.textContent = 'No speech detected';
+              output.textContent = 'No speech detected.';
+              return;
+            }
+            statusEl.textContent = 'Asking…';
+            output.textContent = 'You said: ' + text + '\nThinking…';
+
+            // Now ask the model
+            const cr = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: text })
+            });
+            const cdata = await cr.json();
+            const reply = cdata.reply || '(no reply)';
+            output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
+            statusEl.textContent = 'Ready';
+          } catch (e) {
+            statusEl.textContent = 'Error';
+            output.textContent = 'Error during transcription or chat.';
+          }
+        };
+        mediaRecorder.start();
+      }
+      function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      }
+
+      // Press-and-hold UX
+      pressBtn.onmousedown = async () => {
+        statusEl.textContent = 'Recording… (hold)';
+        await startRecording();
+      };
+      pressBtn.onmouseup = () => {
+        statusEl.textContent = 'Processing…';
+        stopRecording();
+      };
+      pressBtn.onmouseleave = () => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          statusEl.textContent = 'Processing…';
+          stopRecording();
+        }
+      };
+      // Touch support
+      pressBtn.ontouchstart = async (e) => {
+        e.preventDefault();
+        statusEl.textContent = 'Recording… (hold)';
+        await startRecording();
+      };
+      pressBtn.ontouchend = (e) => {
+        e.preventDefault();
+        statusEl.textContent = 'Processing…';
+        stopRecording();
+      };
     </script>
   </body>
 </html>
