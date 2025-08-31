@@ -1,6 +1,6 @@
 // api/transcribe.js
 // Serverless endpoint for "Hold to Talk" – sends a short webm/opus clip to OpenAI Whisper
-export const config = { runtime: "nodejs18.x" };
+export const config = { runtime: "nodejs18" };
 
 export default async function handler(req, res) {
   try {
