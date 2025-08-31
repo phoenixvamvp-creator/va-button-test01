@@ -120,12 +120,21 @@
 
         try {
           // Send as multipart so server can pass-through if needed
-          const form = new FormData();
-          form.append('file', blob, `audio.${chosenExt}`);
-          form.append('model', 'whisper-1');
-
-          const tr = await fetch('/api/transcribe', { method: 'POST', body: form });
+          // Send as JSON (base64 data URL) to match /api/transcribe expectations
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          
+          const tr = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: dataUrl })
+          });
           const tdata = await tr.json();
+
 
           if (!tr.ok || tdata.error) {
             output.textContent = 'Transcription error.';
