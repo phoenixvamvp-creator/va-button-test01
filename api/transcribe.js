@@ -1,6 +1,5 @@
 // api/transcribe.js
-// Serverless endpoint for "Hold to Talk" – sends a short webm/opus clip to OpenAI Whisper
-export const config = { runtime: "nodejs" };
+// Serverless endpoint for Hold-to-Talk: accepts a webm/opus data URL and returns transcript text.
 
 export default async function handler(req, res) {
   try {
@@ -9,18 +8,21 @@ export default async function handler(req, res) {
       return;
     }
 
+    // Read JSON body
     const { audio } = await readJson(req);
     if (!audio || typeof audio !== "string" || !audio.includes("base64,")) {
       res.status(400).json({ error: "Missing audio data URL" });
       return;
     }
 
+    // Decode base64 -> Uint8Array -> Blob (Node 18+ has Blob/FormData/fetch)
     const base64 = audio.split("base64,").pop();
     const buf = Buffer.from(base64, "base64");
+    const fileBlob = new Blob([buf], { type: "audio/webm" });
 
     const fd = new FormData();
-    fd.append("file", new Blob([buf], { type: "audio/webm" }), "clip.webm");
-    // You can switch to "gpt-4o-mini-transcribe" if your account has it enabled.
+    fd.append("file", fileBlob, "clip.webm");
+    // If your account has it, you can try: "gpt-4o-mini-transcribe"
     fd.append("model", "whisper-1");
 
     const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -31,9 +33,10 @@ export default async function handler(req, res) {
 
     if (!r.ok) {
       const body = await r.text().catch(() => "(no body)");
-      res
-        .status(r.status)
-        .json({ error: "OpenAI transcription failed", detail: body.slice(0, 400) });
+      res.status(r.status).json({
+        error: "OpenAI transcription failed",
+        detail: body.slice(0, 400),
+      });
       return;
     }
 
@@ -44,6 +47,7 @@ export default async function handler(req, res) {
   }
 }
 
+// ---- helper ----
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
