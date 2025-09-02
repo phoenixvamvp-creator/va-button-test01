@@ -1,5 +1,10 @@
 // api/transcribe.js
-// Serverless endpoint for Hold-to-Talk: accepts a webm/opus data URL and returns transcript text.
+// Accepts EITHER:
+//  (A) multipart/form-data: { file: <audio blob>, model? }  ← matches your front-end
+//  (B) JSON: { audio: "data:<mime>;base64,..." }            ← fallback
+// Forwards to OpenAI Whisper and returns { text }.
+
+export const config = { runtime: "nodejs" };
 
 export default async function handler(req, res) {
   try {
@@ -8,34 +13,48 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Read JSON body
-    const { audio } = await readJson(req);
-    if (!audio || typeof audio !== "string" || !audio.includes("base64,")) {
-      res.status(400).json({ error: "Missing audio data URL" });
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_API_KEY) {
+      res.status(500).json({ error: "Server missing OPENAI_API_KEY" });
       return;
     }
 
-    // Decode base64 -> Uint8Array -> Blob (Node 18+ has Blob/FormData/fetch)
-    const base64 = audio.split("base64,").pop();
-    const buf = Buffer.from(base64, "base64");
-    const fileBlob = new Blob([buf], { type: "audio/webm" });
-
-    const fd = new FormData();
-    fd.append("file", fileBlob, "clip.webm");
-    // If your account has it, you can try: "gpt-4o-mini-transcribe"
-    fd.append("model", "whisper-1");
-
-    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    const ct = String(req.headers["content-type"] || "");
+    const toOpenAI = {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: fd,
-    });
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    };
 
+    if (ct.includes("multipart/form-data")) {
+      // Pass raw body + boundary straight through to OpenAI
+      const raw = await readRaw(req);
+      toOpenAI.headers["Content-Type"] = ct; // keep boundary
+      toOpenAI.body = raw;
+    } else {
+      // JSON fallback: { audio: "data:<mime>;base64,..." }
+      const { audio, model } = await readJson(req);
+      if (!audio || typeof audio !== "string" || !audio.includes("base64,")) {
+        res.status(400).json({ error: "Missing audio data URL" });
+        return;
+      }
+      const base64 = audio.split("base64,").pop();
+      const buf = Buffer.from(base64, "base64");
+      const mime = (audio.match(/^data:(.*?);base64,/) || [,"audio/webm"])[1];
+
+      const fd = new FormData();
+      fd.append("file", new Blob([buf], { type: mime }), "clip.webm");
+      fd.append("model", model || "whisper-1");
+      toOpenAI.body = fd; // fetch sets correct Content-Type with boundary
+    }
+
+    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", toOpenAI);
+
+    // Bubble up useful diagnostics (no secrets)
     if (!r.ok) {
-      const body = await r.text().catch(() => "(no body)");
+      const detail = await r.text().catch(() => "(no body)");
       res.status(r.status).json({
         error: "OpenAI transcription failed",
-        detail: body.slice(0, 400),
+        detail: detail.slice(0, 800),
       });
       return;
     }
@@ -47,15 +66,21 @@ export default async function handler(req, res) {
   }
 }
 
-// ---- helper ----
+// helpers
+function readRaw(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
     req.setEncoding("utf8");
     req.on("data", (c) => (raw += c));
-    req.on("end", () => {
-      try { resolve(JSON.parse(raw || "{}")); } catch (e) { reject(e); }
-    });
+    req.on("end", () => { try { resolve(JSON.parse(raw || "{}")); } catch (e) { reject(e); } });
     req.on("error", reject);
   });
 }
