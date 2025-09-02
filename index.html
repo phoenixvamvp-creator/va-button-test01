@@ -64,19 +64,73 @@
 
       // ----- Text → Chat -----
       async function sendMessage(msg) {
-        output.textContent = 'Thinking…';
+  output.textContent = 'Thinking…';
+
+  // NEW: route "search: <query>" or "web: <query>" to web search
+  const m = msg.trim();
+  const isSearch = /^(\s*search:|\s*web:)/i.test(m);
+  if (isSearch) {
+    const q = m.replace(/^(\s*search:|\s*web:)/i, '').trim();
+    if (!q) { output.textContent = 'Please provide a search query.'; return; }
+
+    try {
+      const r = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q })
+      });
+      const data = await r.json();
+
+      if (!r.ok || data.error) {
+        output.textContent = 'Search error.';
+        diag.textContent += `\nSearch error: ${(data && (data.error || data.detail)) || r.statusText}`;
+        return;
+      }
+
+      const lines = (data.results || []).map((it, i) => `${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
+      output.textContent = lines || 'No results.';
+
+      // Optional: speak the top result’s title/snippet
+      const top = (data.results || [])[0];
+      if (top) {
         try {
-          const res = await fetch('/api/chat', {
+          const say = `Top result: ${top.title}. ${top.snippet}`;
+          const ttsResp = await fetch('/api/speak', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg })
+            body: JSON.stringify({ text: say, voice: "alloy" })
           });
-          const data = await res.json();
-          output.textContent = (data.reply || data.error || '(no reply)');
-        } catch {
-          output.textContent = 'Network error';
-        }
+          if (ttsResp.ok) {
+            const audioBuf = await ttsResp.arrayBuffer();
+            const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.play().catch(()=>{});
+          }
+        } catch {}
       }
+      return; // stop here; we handled the message via search
+    } catch (e) {
+      output.textContent = 'Search request failed.';
+      diag.textContent += `\nSearch fetch error: ${String(e)}`;
+      return;
+    }
+  }
+
+  // Default path: regular chat
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg })
+    });
+    const data = await res.json();
+    output.textContent = (data.reply || data.error || '(no reply)');
+  } catch {
+    output.textContent = 'Network error';
+  }
+}
+
 
       sendBtn.onclick = () => {
         const msg = textInput.value.trim();
