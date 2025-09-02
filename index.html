@@ -159,9 +159,31 @@
             body: JSON.stringify({ message: text })
           });
           const cdata = await cr.json();
-          const reply = cdata.reply || '(no reply)';
-          output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-          statusEl.textContent = 'Ready';
+const reply = cdata.reply || '(no reply)';
+output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
+statusEl.textContent = 'Ready';
+
+// 🔊 Speak reply
+try {
+  const ttsResp = await fetch('/api/speak', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: reply, voice: "alloy" })
+  });
+  if (ttsResp.ok) {
+    const audioBuf = await ttsResp.arrayBuffer();
+    const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.play().catch(err => console.warn("Autoplay blocked:", err));
+  } else {
+    const err = await ttsResp.json().catch(() => ({}));
+    console.warn("TTS error", err);
+  }
+} catch (err) {
+  console.error("TTS fetch/playback failed:", err);
+}
+
         } catch (e) {
           statusEl.textContent = 'Error';
           output.textContent = 'Error during transcription or chat.';
