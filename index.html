@@ -11,7 +11,7 @@
       button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
-      #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; }
+      #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; max-height: 180px; overflow:auto; }
       /* Prominent CHAT toggle (black bg, scarlet text) */
       .rt-container{ display:flex; align-items:center; gap:12px; padding:8px 12px; border:2px solid black; border-radius:16px; background:black; }
       .rt-label{ font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px; }
@@ -65,18 +65,22 @@
       const rtBadge  = document.getElementById('rtBadge');
       let realtimeActive = false;
 
-      // MIME selection
+      // MIME candidates (will auto-fallback if needed)
       const CANDIDATE_MIMES = [
         'audio/webm;codecs=opus',
-        'audio/webm',
+        'audio/webm',                  // no explicit codecs
         'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a', // iOS
-        'audio/mpeg'
+        'audio/mp4;codecs=mp4a',       // iOS-friendly
+        'audio/mpeg'                   // mp3 fallback
       ];
-      const supported = CANDIDATE_MIMES.find(t => {
-        try { return window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }
-        catch { return false; }
-      }) || 'audio/webm';
+      let chosenMime = detectSupportedMime() || 'audio/webm';
+
+      function detectSupportedMime() {
+        try {
+          if (!(window.MediaRecorder && MediaRecorder.isTypeSupported)) return null;
+          return CANDIDATE_MIMES.find(t => MediaRecorder.isTypeSupported(t)) || null;
+        } catch { return null; }
+      }
 
       function extFromMime(m) {
         if (!m) return 'webm';
@@ -85,9 +89,11 @@
         if (m.includes('mpeg')) return 'mp3';
         return 'webm';
       }
-      const chosenExt = extFromMime(supported);
+      const chosenExt = extFromMime(chosenMime);
 
       // ===== Helpers =====
+      function log(s){ diag.textContent += `\n${s}`; diag.scrollTop = diag.scrollHeight; }
+
       async function speak(text) {
         try {
           const ttsResp = await fetch('/api/speak', {
@@ -103,9 +109,7 @@
             audio.onended = resolve; audio.onerror = resolve;
             audio.play().catch(resolve);
           });
-        } catch (err) {
-          diag.textContent += `\nTTS error: ${String(err)}`;
-        }
+        } catch (err) { log(`TTS error: ${String(err)}`); }
       }
 
       function blobToDataUrl(blob) {
@@ -133,7 +137,7 @@
             const data = await r.json();
             if (!r.ok || data.error) {
               output.textContent = 'Search error.';
-              diag.textContent += `\nSearch error: ${(data && (data.error || data.detail)) || r.statusText}`;
+              log(`Search error: ${(data && (data.error || data.detail)) || r.statusText}`);
               return;
             }
             const lines = (data.results || []).map((it, i) => `${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
@@ -143,7 +147,7 @@
             return;
           } catch (e) {
             output.textContent = 'Search request failed.';
-            diag.textContent += `\nSearch fetch error: ${String(e)}`;
+            log(`Search fetch error: ${String(e)}`);
             return;
           }
         }
@@ -171,26 +175,26 @@
       };
       textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendBtn.click(); });
 
-      // ===== Press-and-hold single-shot path =====
+      // ===== Press-and-hold single-shot path (unchanged) =====
       let mediaRecorder, audioChunks = [];
 
       async function startRecording() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           output.textContent = 'This browser does not support microphone capture.'; return;
         }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        try { mediaRecorder = new MediaRecorder(stream, { mimeType: supported }); }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+        try { mediaRecorder = new MediaRecorder(stream, { mimeType: chosenMime }); }
         catch { mediaRecorder = new MediaRecorder(stream); }
         audioChunks = [];
         mediaRecorder.ondataavailable = e => e.data && e.data.size && audioChunks.push(e.data);
         mediaRecorder.onstop = onStoppedSingleShot;
         mediaRecorder.start();
-        diag.textContent = `Recorder MIME: ${supported} | ext: .${chosenExt}`;
+        log(`Recorder MIME (single-shot): ${chosenMime} | ext: .${chosenExt}`);
       }
 
       async function onStoppedSingleShot() {
-        const blob = new Blob(audioChunks, { type: supported });
-        diag.textContent += `\nBlob size: ${blob.size} bytes; type: ${blob.type}`;
+        const blob = new Blob(audioChunks, { type: chosenMime });
+        log(`Blob size: ${blob.size} bytes; type: ${blob.type}`);
         if (!blob.size) { statusEl.textContent = 'No audio captured'; output.textContent = 'No audio captured.'; return; }
 
         statusEl.textContent = 'Transcribing…';
@@ -205,7 +209,7 @@
           const tdata = await tr.json();
           if (!tr.ok || tdata.error) {
             output.textContent = 'Transcription error.';
-            diag.textContent += `\nServer said: ${tdata.error || ''}${tdata.detail ? '\nDetail: ' + tdata.detail : ''}`;
+            log(`Transcribe error: ${tdata.error || tr.statusText}${tdata.detail ? ' | ' + tdata.detail : ''}`);
             statusEl.textContent = 'Error'; return;
           }
 
@@ -237,7 +241,7 @@
         } catch (e) {
           statusEl.textContent = 'Error';
           output.textContent = 'Error during transcription or chat.';
-          diag.textContent += `\nClient error: ${String(e)}`;
+          log(`Client error: ${String(e)}`);
         }
       }
 
@@ -254,36 +258,64 @@
       pressBtn.ontouchstart = async (e) => { e.preventDefault(); statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend = (e) => { e.preventDefault(); statusEl.textContent = 'Processing…'; stopRecording(); };
 
-      // ===== Realtime loop (CHAT ON) — requestData-based chunks =====
+      // ===== Realtime loop (CHAT ON) — requestData + auto-recovery =====
       let rtStream = null, rtRecorder = null, rtSpeaking = false, rtBufferText = '', rtSilenceTicks = 0;
-      let rtTranscribing = false;          // prevent piling up /api/transcribe
-      let rtInterval = null;               // NEW: drives requestData() ticks
-      const CHUNK_MS = 700;
-      const SILENCE_LIMIT = 4;
+      let rtTranscribing = false;    // prevent piling up /api/transcribe
+      let rtInterval = null;         // drives requestData() ticks
+      let rtTick = 0;                // tick counter
+      let rtZeroBytes = 0;           // consecutive zero-byte chunks
+
+      // Tunables
+      const CHUNK_MS = 800;          // tick period
+      const SILENCE_LIMIT = 4;       // ~3.2s
       const MIN_UTTER_LEN = 12;
       const END_PUNCT_RE = /[.!?…]$/;
+
+      function micConstraints(){
+        // Mobile-friendly audio constraints
+        return {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 48000,   // hint; browser may choose closest
+          sampleSize: 16
+        };
+      }
 
       async function startRealtime() {
         if (rtRecorder) return;
         statusEl.textContent = 'CHAT mode: listening…';
-        rtBufferText = ''; rtSilenceTicks = 0;
+        rtBufferText = ''; rtSilenceTicks = 0; rtZeroBytes = 0; rtTick = 0;
 
         try {
-          rtStream = await navigator.mediaDevices.getUserMedia({ audio:true });
-          try { rtRecorder = new MediaRecorder(rtStream, { mimeType: supported }); }
+          rtStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
+
+          // Try preferred MIME, else fallback to browser default
+          try { rtRecorder = new MediaRecorder(rtStream, { mimeType: chosenMime }); }
           catch { rtRecorder = new MediaRecorder(rtStream); }
 
           rtRecorder.ondataavailable = onRtChunk;
-          rtRecorder.start(); // <-- no timeslice; we'll drive requestData ourselves
+          rtRecorder.onstop = () => log('[CHAT] recorder stopped');
+          rtRecorder.start(); // no timeslice; we drive requestData
 
-          // Force periodic chunks for maximum compatibility
+          // Force periodic chunks
           rtInterval = setInterval(() => {
-            try { if (rtRecorder && rtRecorder.state === 'recording') rtRecorder.requestData(); } catch {}
+            rtTick++;
+            try {
+              if (rtRecorder && rtRecorder.state === 'recording') {
+                rtRecorder.requestData();
+                // heartbeat for visibility
+                if (rtTick % 3 === 0) log(`[CHAT] tick ${rtTick}`);
+              }
+            } catch (e) {
+              log(`[CHAT] requestData error: ${String(e)}`);
+            }
           }, CHUNK_MS);
 
-          diag.textContent += `\n[CHAT] Realtime started (${supported}); forced chunks every ${CHUNK_MS}ms`;
+          log(`[CHAT] Realtime started (${chosenMime}); forced chunks every ${CHUNK_MS}ms`);
         } catch (err) {
-          diag.textContent += `\n[CHAT] Failed to start: ${String(err)}`;
+          log(`[CHAT] Failed to start: ${String(err)}`);
           statusEl.textContent = 'CHAT error: mic unavailable';
           stopRealtime();
         }
@@ -303,14 +335,26 @@
       }
 
       async function onRtChunk(ev) {
-        // Basic visibility for debugging chunk flow
-        if (ev && ev.data) {
-          diag.textContent += `\n[CHAT] chunk: ${ev.data.size} bytes`;
+        if (!ev || !ev.data) return;
+        const size = ev.data.size || 0;
+        log(`[CHAT] chunk: ${size} bytes`);
+
+        if (size === 0) {
+          rtZeroBytes++;
+          // Auto-recover: if we get 5 zero-byte chunks in a row, restart with a safer MIME
+          if (rtZeroBytes >= 5) {
+            log('[CHAT] too many empty chunks — restarting recorder with fallback MIME');
+            await restartRealtimeWithFallback();
+          }
+          rtSilenceTicks++;
+          checkFinalize();
+          return;
         }
 
-        if (!ev.data || !ev.data.size) { rtSilenceTicks++; checkFinalize(); return; }
-        if (rtSpeaking) return;            // avoid feedback while speaking
-        if (rtTranscribing) return;        // drop if one is in flight
+        // Got data
+        rtZeroBytes = 0;
+        if (rtSpeaking) return;          // avoid feedback while speaking
+        if (rtTranscribing) return;      // drop if one is in flight
 
         rtTranscribing = true;
         try {
@@ -331,10 +375,34 @@
           }
           checkFinalize();
         } catch (err) {
-          diag.textContent += `\n[CHAT] transcribe error: ${String(err)}`;
+          log(`[CHAT] transcribe error: ${String(err)}`);
         } finally {
           rtTranscribing = false;
         }
+      }
+
+      async function restartRealtimeWithFallback() {
+        // Stop current
+        try { if (rtInterval) clearInterval(rtInterval); } catch {}
+        try { if (rtRecorder && rtRecorder.state !== 'inactive') rtRecorder.stop(); } catch {}
+        try { if (rtStream) rtStream.getTracks().forEach(t => t.stop()); } catch {}
+
+        // Choose a safer MIME (step down the list)
+        const idx = Math.max(0, CANDIDATE_MIMES.indexOf(chosenMime));
+        const nextCandidates = CANDIDATE_MIMES.slice(idx + 1);
+        const alt = nextCandidates.find(m => {
+          try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
+        }) || null;
+        if (alt) {
+          chosenMime = alt;
+          log(`[CHAT] fallback MIME: ${alt}`);
+        } else {
+          log('[CHAT] no further MIME fallbacks available; using browser default');
+        }
+
+        // Restart
+        rtRecorder = null; rtStream = null; rtInterval = null; rtZeroBytes = 0; rtTick = 0;
+        await startRealtime();
       }
 
       function checkFinalize() {
@@ -371,7 +439,7 @@
             output.textContent = `You: ${utterance}\nAssistant: ${reply}`;
             await speak(reply);
           } catch (err) {
-            diag.textContent += `\n[CHAT] chat error: ${String(err)}`;
+            log(`[CHAT] chat error: ${String(err)}`);
             output.textContent = `You: ${utterance}\nAssistant: (error)`;
           } finally {
             statusEl.textContent = 'CHAT mode: listening…';
@@ -383,9 +451,7 @@
         const wasActive = !!rtRecorder;
         if (wasActive) { try { rtRecorder.stop(); } catch {} rtRecorder = null; }
         try { await fn(); }
-        finally {
-          if (realtimeActive) { await startRealtime(); }
-        }
+        finally { if (realtimeActive) { await startRealtime(); } }
       }
 
       // ===== CHAT toggle logic =====
@@ -403,6 +469,14 @@
       }
       rtToggle.addEventListener('click', toggleRealtime);
       rtToggle.addEventListener('keydown', (e)=>{ if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); toggleRealtime(); } });
+
+      // Restart realtime if page regains focus (mobile browsers can pause timers/streams)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && realtimeActive && !rtRecorder) {
+          log('[CHAT] page visible — restarting realtime');
+          startRealtime();
+        }
+      });
 
       // Init (default OFF)
       setRealtimeActive(false);
