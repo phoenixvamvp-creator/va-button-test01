@@ -12,7 +12,6 @@
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
       #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; }
-
       /* Prominent CHAT toggle (black bg, scarlet text) */
       .rt-container{ display:flex; align-items:center; gap:12px; padding:8px 12px; border:2px solid black; border-radius:16px; background:black; }
       .rt-label{ font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px; }
@@ -68,7 +67,11 @@
 
       // MIME selection
       const CANDIDATE_MIMES = [
-        'audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4;codecs=mp4a','audio/mpeg'
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4;codecs=mp4a', // iOS
+        'audio/mpeg'
       ];
       const supported = CANDIDATE_MIMES.find(t => {
         try { return window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }
@@ -251,10 +254,11 @@
       pressBtn.ontouchstart = async (e) => { e.preventDefault(); statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend = (e) => { e.preventDefault(); statusEl.textContent = 'Processing…'; stopRecording(); };
 
-      // ===== Realtime loop (CHAT ON) — throttled =====
+      // ===== Realtime loop (CHAT ON) — requestData-based chunks =====
       let rtStream = null, rtRecorder = null, rtSpeaking = false, rtBufferText = '', rtSilenceTicks = 0;
-      let rtTranscribing = false;              // NEW: prevent piling up /api/transcribe
-      const CHUNK_MS = 700;                    // CHANGED: smaller chunks for snappier feel
+      let rtTranscribing = false;          // prevent piling up /api/transcribe
+      let rtInterval = null;               // NEW: drives requestData() ticks
+      const CHUNK_MS = 700;
       const SILENCE_LIMIT = 2;
       const MIN_UTTER_LEN = 6;
       const END_PUNCT_RE = /[.!?…]$/;
@@ -268,9 +272,16 @@
           rtStream = await navigator.mediaDevices.getUserMedia({ audio:true });
           try { rtRecorder = new MediaRecorder(rtStream, { mimeType: supported }); }
           catch { rtRecorder = new MediaRecorder(rtStream); }
+
           rtRecorder.ondataavailable = onRtChunk;
-          rtRecorder.start(CHUNK_MS);
-          diag.textContent += `\n[CHAT] Realtime started (${supported})`;
+          rtRecorder.start(); // <-- no timeslice; we'll drive requestData ourselves
+
+          // Force periodic chunks for maximum compatibility
+          rtInterval = setInterval(() => {
+            try { if (rtRecorder && rtRecorder.state === 'recording') rtRecorder.requestData(); } catch {}
+          }, CHUNK_MS);
+
+          diag.textContent += `\n[CHAT] Realtime started (${supported}); forced chunks every ${CHUNK_MS}ms`;
         } catch (err) {
           diag.textContent += `\n[CHAT] Failed to start: ${String(err)}`;
           statusEl.textContent = 'CHAT error: mic unavailable';
@@ -279,19 +290,29 @@
       }
 
       async function stopRealtime() {
+        try { if (rtInterval) clearInterval(rtInterval); } catch {}
+        rtInterval = null;
+
         try { if (rtRecorder && rtRecorder.state !== 'inactive') rtRecorder.stop(); } catch {}
         rtRecorder = null;
+
         try { if (rtStream) rtStream.getTracks().forEach(t => t.stop()); } catch {}
         rtStream = null;
+
         statusEl.textContent = 'CHAT OFF. Press-and-hold active.';
       }
 
       async function onRtChunk(ev) {
+        // Basic visibility for debugging chunk flow
+        if (ev && ev.data) {
+          diag.textContent += `\n[CHAT] chunk: ${ev.data.size} bytes`;
+        }
+
         if (!ev.data || !ev.data.size) { rtSilenceTicks++; checkFinalize(); return; }
         if (rtSpeaking) return;            // avoid feedback while speaking
-        if (rtTranscribing) return;        // NEW: drop this chunk if one is in flight
+        if (rtTranscribing) return;        // drop if one is in flight
 
-        rtTranscribing = true;             // NEW
+        rtTranscribing = true;
         try {
           const dataUrl = await blobToDataUrl(ev.data);
           const tr = await fetch('/api/transcribe', {
@@ -312,7 +333,7 @@
         } catch (err) {
           diag.textContent += `\n[CHAT] transcribe error: ${String(err)}`;
         } finally {
-          rtTranscribing = false;          // NEW
+          rtTranscribing = false;
         }
       }
 
@@ -362,7 +383,9 @@
         const wasActive = !!rtRecorder;
         if (wasActive) { try { rtRecorder.stop(); } catch {} rtRecorder = null; }
         try { await fn(); }
-        finally { if (realtimeActive) { await startRealtime(); } }
+        finally {
+          if (realtimeActive) { await startRealtime(); }
+        }
       }
 
       // ===== CHAT toggle logic =====
