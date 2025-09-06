@@ -259,8 +259,8 @@
       let rtTranscribing = false;          // prevent piling up /api/transcribe
       let rtInterval = null;               // NEW: drives requestData() ticks
       const CHUNK_MS = 700;
-      const SILENCE_LIMIT = 2;
-      const MIN_UTTER_LEN = 6;
+      const SILENCE_LIMIT = 4;
+      const MIN_UTTER_LEN = 12;
       const END_PUNCT_RE = /[.!?…]$/;
 
       async function startRealtime() {
