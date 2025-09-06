@@ -6,20 +6,57 @@
     <style>
       body { font-family: system-ui, Arial, sans-serif; margin: 40px; }
       h1 { margin-top: 0; }
-      #row { margin: 8px 0; }
+      #row { margin: 8px 0; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
       input[type="text"] { width: 360px; max-width: 100%; padding: 8px; font-size: 16px; }
       button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
       #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; }
+
+      /* Prominent CHAT toggle (black bg, scarlet text) */
+      .rt-container{
+        display:flex; align-items:center; gap:12px; padding:8px 12px;
+        border:2px solid black; border-radius:16px; background:black;
+      }
+      .rt-label{
+        font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px;
+      }
+      .rt-toggle{
+        position:relative; width:76px; height:40px; border-radius:999px;
+        background:#222; border:2px solid #b3132c; cursor:pointer;
+        display:inline-flex; align-items:center; padding:2px; transition:background .2s ease;
+      }
+      .rt-toggle[aria-checked="true"]{ background:#330000; }
+      .rt-thumb{
+        width:34px; height:34px; border-radius:999px; background:#b3132c;
+        transform: translateX(0); transition: transform .2s ease;
+      }
+      .rt-toggle[aria-checked="true"] .rt-thumb{ transform: translateX(36px); }
+      .rt-note{ font-size:12px; color:#b3132c; margin-left:4px; }
+      .rt-badge{
+        font-size:12px; padding:4px 8px; border-radius:999px;
+        background:black; color:#b3132c; border:1px solid #b3132c;
+      }
+      .rt-badge.off{ background:#111; color:#666; border-color:#333; }
     </style>
   </head>
   <body>
     <h1>PhoenixVA — Voice + Text Portal</h1>
 
-    <!-- Press-to-talk (hold) -->
+    <!-- Press-to-talk (hold) + CHAT toggle -->
     <div id="row">
       <button id="pressBtn">🎙️ Hold to Talk</button>
+
+      <!-- CHAT toggle (framework only; sets a flag for future realtime) -->
+      <div class="rt-container" role="group" aria-label="CHAT toggle">
+        <span class="rt-label">CHAT</span>
+        <div id="rtToggle" class="rt-toggle" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle CHAT mode">
+          <div class="rt-thumb"></div>
+        </div>
+        <span id="rtBadge" class="rt-badge off">OFF</span>
+        <span class="rt-note">Framework only — streaming to be wired</span>
+      </div>
+
       <span id="status"></span>
     </div>
 
@@ -40,13 +77,18 @@
       const statusEl  = document.getElementById('status');
       const diag      = document.getElementById('diag');
 
+      // CHAT toggle elements/flag (default OFF)
+      const rtToggle = document.getElementById('rtToggle');
+      const rtBadge  = document.getElementById('rtBadge');
+      let realtimeActive = false;
+
       // Pick a MIME the device actually supports (mobile-safe)
       const CANDIDATE_MIMES = [
         'audio/webm;codecs=opus',
         'audio/webm',
         'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a',   // common on iOS
-        'audio/mpeg'               // fallback
+        'audio/mp4;codecs=mp4a',
+        'audio/mpeg'
       ];
       const supported = CANDIDATE_MIMES.find(t => {
         try { return window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t); }
@@ -64,73 +106,72 @@
 
       // ----- Text → Chat -----
       async function sendMessage(msg) {
-  output.textContent = 'Thinking…';
+        output.textContent = 'Thinking…';
 
-  // NEW: route "search: <query>" or "web: <query>" to web search
-  const m = msg.trim();
-  const isSearch = /^(\s*search:|\s*web:)/i.test(m);
-  if (isSearch) {
-    const q = m.replace(/^(\s*search:|\s*web:)/i, '').trim();
-    if (!q) { output.textContent = 'Please provide a search query.'; return; }
+        // Route "search: <query>" or "web: <query>" to web search
+        const m = msg.trim();
+        const isSearch = /^(\s*search:|\s*web:)/i.test(m);
+        if (isSearch) {
+          const q = m.replace(/^(\s*search:|\s*web:)/i, '').trim();
+          if (!q) { output.textContent = 'Please provide a search query.'; return; }
 
-    try {
-      const r = await fetch('/api/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ q })
-      });
-      const data = await r.json();
+          try {
+            const r = await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ q })
+            });
+            const data = await r.json();
 
-      if (!r.ok || data.error) {
-        output.textContent = 'Search error.';
-        diag.textContent += `\nSearch error: ${(data && (data.error || data.detail)) || r.statusText}`;
-        return;
-      }
+            if (!r.ok || data.error) {
+              output.textContent = 'Search error.';
+              diag.textContent += `\nSearch error: ${(data && (data.error || data.detail)) || r.statusText}`;
+              return;
+            }
 
-      const lines = (data.results || []).map((it, i) => `${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
-      output.textContent = lines || 'No results.';
+            const lines = (data.results || []).map((it, i) => `${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
+            output.textContent = lines || 'No results.';
 
-      // Optional: speak the top result’s title/snippet
-      const top = (data.results || [])[0];
-      if (top) {
+            // Optional: speak the top result
+            const top = (data.results || [])[0];
+            if (top) {
+              try {
+                const say = `Top result: ${top.title}. ${top.snippet}`;
+                const ttsResp = await fetch('/api/speak', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ text: say, voice: "alloy" })
+                });
+                if (ttsResp.ok) {
+                  const audioBuf = await ttsResp.arrayBuffer();
+                  const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
+                  const url = URL.createObjectURL(blob);
+                  const audio = new Audio(url);
+                  audio.play().catch(()=>{});
+                }
+              } catch {}
+            }
+            return; // handled via search
+          } catch (e) {
+            output.textContent = 'Search request failed.';
+            diag.textContent += `\nSearch fetch error: ${String(e)}`;
+            return;
+          }
+        }
+
+        // Default path: regular chat
         try {
-          const say = `Top result: ${top.title}. ${top.snippet}`;
-          const ttsResp = await fetch('/api/speak', {
+          const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: say, voice: "alloy" })
+            body: JSON.stringify({ message: msg })
           });
-          if (ttsResp.ok) {
-            const audioBuf = await ttsResp.arrayBuffer();
-            const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.play().catch(()=>{});
-          }
-        } catch {}
+          const data = await res.json();
+          output.textContent = (data.reply || data.error || '(no reply)');
+        } catch {
+          output.textContent = 'Network error';
+        }
       }
-      return; // stop here; we handled the message via search
-    } catch (e) {
-      output.textContent = 'Search request failed.';
-      diag.textContent += `\nSearch fetch error: ${String(e)}`;
-      return;
-    }
-  }
-
-  // Default path: regular chat
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: msg })
-    });
-    const data = await res.json();
-    output.textContent = (data.reply || data.error || '(no reply)');
-  } catch {
-    output.textContent = 'Network error';
-  }
-}
-
 
       sendBtn.onclick = () => {
         const msg = textInput.value.trim();
@@ -173,8 +214,6 @@
         output.textContent = 'Transcribing…';
 
         try {
-          // Send as multipart so server can pass-through if needed
-          // Send as JSON (base64 data URL) to match /api/transcribe expectations
           const dataUrl = await new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
@@ -188,7 +227,6 @@
             body: JSON.stringify({ audio: dataUrl })
           });
           const tdata = await tr.json();
-
 
           if (!tr.ok || tdata.error) {
             output.textContent = 'Transcription error.';
@@ -213,30 +251,30 @@
             body: JSON.stringify({ message: text })
           });
           const cdata = await cr.json();
-const reply = cdata.reply || '(no reply)';
-output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-statusEl.textContent = 'Ready';
+          const reply = cdata.reply || '(no reply)';
+          output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
+          statusEl.textContent = 'Ready';
 
-// 🔊 Speak reply
-try {
-  const ttsResp = await fetch('/api/speak', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: reply, voice: "alloy" })
-  });
-  if (ttsResp.ok) {
-    const audioBuf = await ttsResp.arrayBuffer();
-    const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.play().catch(err => console.warn("Autoplay blocked:", err));
-  } else {
-    const err = await ttsResp.json().catch(() => ({}));
-    console.warn("TTS error", err);
-  }
-} catch (err) {
-  console.error("TTS fetch/playback failed:", err);
-}
+          // 🔊 Speak reply
+          try {
+            const ttsResp = await fetch('/api/speak', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: reply, voice: "alloy" })
+            });
+            if (ttsResp.ok) {
+              const audioBuf = await ttsResp.arrayBuffer();
+              const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
+              const url = URL.createObjectURL(blob);
+              const audio = new Audio(url);
+              audio.play().catch(err => console.warn("Autoplay blocked:", err));
+            } else {
+              const err = await ttsResp.json().catch(() => ({}));
+              console.warn("TTS error", err);
+            }
+          } catch (err) {
+            console.error("TTS fetch/playback failed:", err);
+          }
 
         } catch (e) {
           statusEl.textContent = 'Error';
@@ -251,7 +289,7 @@ try {
 
       // Press-and-hold UX (mouse + touch)
       pressBtn.onmousedown = async () => {
-        statusEl.textContent = 'Recording… (hold)';
+        statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)';
         await startRecording();
       };
       pressBtn.onmouseup = () => {
@@ -266,7 +304,7 @@ try {
       };
       pressBtn.ontouchstart = async (e) => {
         e.preventDefault();
-        statusEl.textContent = 'Recording… (hold)';
+        statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)';
         await startRecording();
       };
       pressBtn.ontouchend = (e) => {
@@ -274,6 +312,33 @@ try {
         statusEl.textContent = 'Processing…';
         stopRecording();
       };
+
+      // ====== CHAT toggle logic (framework only) ======
+      function setRealtimeActive(on){
+        realtimeActive = !!on;
+        rtToggle.setAttribute('aria-checked', realtimeActive ? 'true' : 'false');
+        rtBadge.textContent = realtimeActive ? 'ON' : 'OFF';
+        rtBadge.classList.toggle('off', !realtimeActive);
+
+        if (realtimeActive){
+          statusEl.textContent = 'CHAT mode (framework): realtime pipeline to be wired.';
+          // TODO: initialize realtime capture/stream when ready
+        } else {
+          statusEl.textContent = 'CHAT OFF. Press-and-hold active.';
+          // TODO: teardown realtime capture/stream when implemented
+        }
+      }
+      function toggleRealtime(){
+        const next = !(rtToggle.getAttribute('aria-checked') === 'true');
+        setRealtimeActive(next);
+      }
+      rtToggle.addEventListener('click', toggleRealtime);
+      rtToggle.addEventListener('keydown', (e)=>{
+        if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); toggleRealtime(); }
+      });
+
+      // Init (default OFF)
+      setRealtimeActive(false);
     </script>
   </body>
 </html>
