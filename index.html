@@ -12,6 +12,7 @@
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
       #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; max-height: 180px; overflow:auto; }
+      /* Prominent CHAT toggle (black bg, scarlet text) */
       .rt-container{ display:flex; align-items:center; gap:12px; padding:8px 12px; border:2px solid black; border-radius:16px; background:black; }
       .rt-label{ font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px; }
       .rt-toggle{ position:relative; width:76px; height:40px; border-radius:999px; background:#222; border:2px solid #b3132c; cursor:pointer; display:inline-flex; align-items:center; padding:2px; transition:background .2s ease; }
@@ -61,6 +62,7 @@
       const rtBadge  = document.getElementById('rtBadge');
       let realtimeActive = false;
 
+      // MIME candidates (auto detect)
       const CANDIDATE_MIMES = [
         'audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4;codecs=mp4a','audio/mpeg'
       ];
@@ -105,7 +107,7 @@
         });
       }
 
-      // ===== Text path (also used by voice "search:" routing) =====
+      // ===== Text path =====
       async function sendMessage(msg){
         output.textContent = 'Thinking…';
         const m = msg.trim();
@@ -140,7 +142,7 @@
       };
       textInput.addEventListener('keydown', e=>{ if(e.key==='Enter') sendBtn.click(); });
 
-      // ===== Press-and-hold single-shot =====
+      // ===== Press-and-hold single-shot (unchanged logic) =====
       let mediaRecorder, audioChunks=[];
       async function startRecording(){
         if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ output.textContent='This browser does not support microphone capture.'; return; }
@@ -178,20 +180,19 @@
       pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-      // ===== Realtime loop (debounced finalization) =====
-      let rtStream=null, rtRecorder=null, rtSpeaking=false, rtBufferText='', rtTranscribing=false, rtInterval=null, rtTick=0;
+      // ===== Realtime loop with coalesced pending chunks =====
+      let rtStream=null, rtRecorder=null, rtBufferText='', rtTranscribing=false, rtInterval=null, rtTick=0;
       let inactivityTimer=null;
-      const CHUNK_MS = 800;
-      const INACTIVITY_MS = 1400;     // finalize if no new text for this long
+      let rtPendingBlob=null;           // NEW: holds latest unprocessed chunk
+      const CHUNK_MS = 500;             // faster ticks; coalescing prevents backlog
+      const INACTIVITY_MS = 1300;       // finalize if no new text for ~1.3s
       const END_PUNCT_RE = /[.!?…]"?$/;
 
-      // dedupe helper: many STT chunks repeat previous text; prefer replacement over append
       function mergePartial(prev, incoming){
         if(!incoming) return prev;
-        if(incoming.startsWith(prev)) return incoming; // full replacement
+        if(incoming.startsWith(prev)) return incoming;          // full replacement pattern
         if(prev && incoming && prev.endsWith(incoming)) return prev; // duplicate tail
-        // conservative append
-        return prev ? (prev + ' ' + incoming) : incoming;
+        return prev ? (prev + ' ' + incoming) : incoming;       // conservative append
       }
 
       function scheduleFinalize(){
@@ -199,19 +200,22 @@
         inactivityTimer = setTimeout(()=> finalizeUtterance(), INACTIVITY_MS);
       }
 
-      function micConstraints(){ return { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }; }
+      function micConstraints(){
+        return { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 };
+      }
 
       async function startRealtime(){
         if(rtRecorder) return;
         statusEl.textContent='CHAT mode: listening…';
-        rtBufferText=''; rtTick=0;
+        rtBufferText=''; rtTick=0; rtPendingBlob=null;
+
         try{
           rtStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
           try{ rtRecorder = new MediaRecorder(rtStream, { mimeType: chosenMime }); }
           catch{ rtRecorder = new MediaRecorder(rtStream); }
           rtRecorder.ondataavailable = onRtChunk;
           rtRecorder.onstop = ()=> log('[CHAT] recorder stopped');
-          rtRecorder.start(); // no timeslice, we drive requestData
+          rtRecorder.start(); // we drive requestData
           rtInterval = setInterval(()=> {
             rtTick++;
             try{ if(rtRecorder && rtRecorder.state==='recording') rtRecorder.requestData(); }catch(e){ log(`[CHAT] requestData error: ${String(e)}`); }
@@ -242,32 +246,44 @@
         log(`[CHAT] chunk: ${size} bytes`);
 
         if(size === 0){
-          // no transcript update; do not finalize here—debounce handles it
+          // No new audio in this tick; do nothing — debounce will handle finalize.
           return;
         }
 
-        if(rtSpeaking || rtTranscribing) return;
+        // If a transcribe request is in flight, keep only the latest pending chunk
+        if(rtTranscribing){
+          rtPendingBlob = ev.data;  // replace any older pending with the newest chunk
+          return;
+        }
 
+        // Process this chunk now
+        await processChunk(ev.data);
+        // After finishing, if a newer chunk arrived meanwhile, process it immediately
+        while(rtPendingBlob){
+          const next = rtPendingBlob;
+          rtPendingBlob = null;     // clear before processing to allow coalescing
+          await processChunk(next);
+        }
+      }
+
+      async function processChunk(blob){
+        if(rtTranscribing) return; // safety
         rtTranscribing = true;
         try{
-          const dataUrl = await blobToDataUrl(ev.data);
+          const dataUrl = await blobToDataUrl(blob);
           const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ audio: dataUrl }) });
           const tdata = await tr.json();
           const chunkText = (tdata && tdata.text || '').trim();
 
           if(chunkText){
-            // update buffer with deduped partials
             rtBufferText = mergePartial(rtBufferText, chunkText);
             output.textContent = `You (live): ${rtBufferText}`;
 
-            // if user ended with punctuation, finalize immediately
             if(END_PUNCT_RE.test(rtBufferText.trim())){
               if(inactivityTimer){ clearTimeout(inactivityTimer); inactivityTimer=null; }
-              finalizeUtterance();
+              await finalizeUtterance();
               return;
             }
-
-            // reset inactivity timer on any new text
             scheduleFinalize();
           }
         }catch(err){
