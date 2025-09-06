@@ -12,7 +12,6 @@
       #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
       #status { color:#555; }
       #diag { margin-top: 8px; font-size: 12px; color:#666; white-space: pre-wrap; max-height: 180px; overflow:auto; }
-      /* Prominent CHAT toggle (black bg, scarlet text) */
       .rt-container{ display:flex; align-items:center; gap:12px; padding:8px 12px; border:2px solid black; border-radius:16px; background:black; }
       .rt-label{ font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px; }
       .rt-toggle{ position:relative; width:76px; height:40px; border-radius:999px; background:#222; border:2px solid #b3132c; cursor:pointer; display:inline-flex; align-items:center; padding:2px; transition:background .2s ease; }
@@ -27,7 +26,6 @@
   <body>
     <h1>PhoenixVA — Voice + Text Portal</h1>
 
-    <!-- Press-to-talk (hold) + CHAT toggle -->
     <div id="row">
       <button id="pressBtn">🎙️ Hold to Talk</button>
 
@@ -43,7 +41,6 @@
       <span id="status"></span>
     </div>
 
-    <!-- Type-to-send -->
     <div id="row">
       <input id="textInput" type="text" placeholder="Type your message…" />
       <button id="sendBtn">Send</button>
@@ -60,425 +57,286 @@
       const statusEl  = document.getElementById('status');
       const diag      = document.getElementById('diag');
 
-      // CHAT toggle elements/flag (default OFF)
       const rtToggle = document.getElementById('rtToggle');
       const rtBadge  = document.getElementById('rtBadge');
       let realtimeActive = false;
 
-      // MIME candidates (will auto-fallback if needed)
       const CANDIDATE_MIMES = [
-        'audio/webm;codecs=opus',
-        'audio/webm',                  // no explicit codecs
-        'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a',       // iOS-friendly
-        'audio/mpeg'                   // mp3 fallback
+        'audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4;codecs=mp4a','audio/mpeg'
       ];
-      let chosenMime = detectSupportedMime() || 'audio/webm';
-
-      function detectSupportedMime() {
-        try {
-          if (!(window.MediaRecorder && MediaRecorder.isTypeSupported)) return null;
+      function detectSupportedMime(){
+        try{
+          if(!(window.MediaRecorder && MediaRecorder.isTypeSupported)) return null;
           return CANDIDATE_MIMES.find(t => MediaRecorder.isTypeSupported(t)) || null;
-        } catch { return null; }
+        }catch{ return null; }
       }
-
-      function extFromMime(m) {
-        if (!m) return 'webm';
-        if (m.includes('mp4')) return 'mp4';
-        if (m.includes('ogg')) return 'ogg';
-        if (m.includes('mpeg')) return 'mp3';
+      let chosenMime = detectSupportedMime() || 'audio/webm';
+      function extFromMime(m){
+        if(!m) return 'webm';
+        if(m.includes('mp4')) return 'mp4';
+        if(m.includes('ogg')) return 'ogg';
+        if(m.includes('mpeg')) return 'mp3';
         return 'webm';
       }
       const chosenExt = extFromMime(chosenMime);
 
-      // ===== Helpers =====
       function log(s){ diag.textContent += `\n${s}`; diag.scrollTop = diag.scrollHeight; }
 
-      async function speak(text) {
-        try {
-          const ttsResp = await fetch('/api/speak', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice: "alloy" })
+      async function speak(text){
+        try{
+          const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, voice:'alloy' }) });
+          if(!r.ok) return;
+          const buf = await r.arrayBuffer();
+          const url = URL.createObjectURL(new Blob([buf],{ type:'audio/mpeg' }));
+          await new Promise(res=>{
+            const a = new Audio(url);
+            a.onended = res; a.onerror = res;
+            a.play().catch(res);
           });
-          if (!ttsResp.ok) return;
-          const audioBuf = await ttsResp.arrayBuffer();
-          const blob = new Blob([audioBuf], { type: 'audio/mpeg' });
-          const url = URL.createObjectURL(blob);
-          await new Promise((resolve)=> {
-            const audio = new Audio(url);
-            audio.onended = resolve; audio.onerror = resolve;
-            audio.play().catch(resolve);
-          });
-        } catch (err) { log(`TTS error: ${String(err)}`); }
+        }catch(e){ log(`TTS error: ${String(e)}`); }
       }
 
-      function blobToDataUrl(blob) {
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
+      function blobToDataUrl(blob){
+        return new Promise((resolve,reject)=>{
+          const fr = new FileReader();
+          fr.onload = ()=>resolve(fr.result);
+          fr.onerror = reject;
+          fr.readAsDataURL(blob);
         });
       }
 
-      // ===== Text → Chat or Web Search =====
-      async function sendMessage(msg) {
+      // ===== Text path (also used by voice "search:" routing) =====
+      async function sendMessage(msg){
         output.textContent = 'Thinking…';
         const m = msg.trim();
         const isSearch = /^(\s*search:|\s*web:)/i.test(m);
-        if (isSearch) {
-          const q = m.replace(/^(\s*search:|\s*web:)/i, '').trim();
-          if (!q) { output.textContent = 'Please provide a search query.'; return; }
-          try {
-            const r = await fetch('/api/search', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ q })
-            });
+        if(isSearch){
+          const q = m.replace(/^(\s*search:|\s*web:)/i,'').trim();
+          if(!q){ output.textContent='Please provide a search query.'; return; }
+          try{
+            const r = await fetch('/api/search',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ q }) });
             const data = await r.json();
-            if (!r.ok || data.error) {
-              output.textContent = 'Search error.';
-              log(`Search error: ${(data && (data.error || data.detail)) || r.statusText}`);
-              return;
-            }
-            const lines = (data.results || []).map((it, i) => `${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
+            if(!r.ok || data.error){ output.textContent='Search error.'; log(`Search error: ${(data && (data.error||data.detail))||r.statusText}`); return; }
+            const lines = (data.results||[]).map((it,i)=>`${i+1}. ${it.title}\n${it.link}\n${it.snippet}`).join('\n\n');
             output.textContent = lines || 'No results.';
-            const top = (data.results || [])[0];
-            if (top) { await speak(`Top result: ${top.title}. ${top.snippet}`); }
+            const top = (data.results||[])[0]; if(top){ await speak(`Top result: ${top.title}. ${top.snippet}`); }
             return;
-          } catch (e) {
-            output.textContent = 'Search request failed.';
-            log(`Search fetch error: ${String(e)}`);
-            return;
-          }
+          }catch(e){ output.textContent='Search request failed.'; log(`Search fetch error: ${String(e)}`); return; }
         }
-
-        // Default chat
-        try {
-          const res = await fetch('/api/chat', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg })
-          });
-          const data = await res.json();
-          const reply = (data.reply || data.error || '(no reply)');
+        try{
+          const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: m }) });
+          const data = await r.json();
+          const reply = data.reply || data.error || '(no reply)';
           output.textContent = reply;
           await speak(reply);
-        } catch {
-          output.textContent = 'Network error';
-        }
+        }catch{ output.textContent='Network error'; }
       }
 
-      sendBtn.onclick = () => {
+      sendBtn.onclick = ()=>{
         const msg = textInput.value.trim();
-        if (!msg) return;
+        if(!msg) return;
         textInput.value = '';
         sendMessage(msg);
       };
-      textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendBtn.click(); });
+      textInput.addEventListener('keydown', e=>{ if(e.key==='Enter') sendBtn.click(); });
 
-      // ===== Press-and-hold single-shot path (unchanged) =====
-      let mediaRecorder, audioChunks = [];
-
-      async function startRecording() {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          output.textContent = 'This browser does not support microphone capture.'; return;
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
-        try { mediaRecorder = new MediaRecorder(stream, { mimeType: chosenMime }); }
-        catch { mediaRecorder = new MediaRecorder(stream); }
+      // ===== Press-and-hold single-shot =====
+      let mediaRecorder, audioChunks=[];
+      async function startRecording(){
+        if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ output.textContent='This browser does not support microphone capture.'; return; }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+        try{ mediaRecorder = new MediaRecorder(stream, { mimeType: chosenMime }); } catch{ mediaRecorder = new MediaRecorder(stream); }
         audioChunks = [];
-        mediaRecorder.ondataavailable = e => e.data && e.data.size && audioChunks.push(e.data);
+        mediaRecorder.ondataavailable = e=> e.data && e.data.size && audioChunks.push(e.data);
         mediaRecorder.onstop = onStoppedSingleShot;
         mediaRecorder.start();
         log(`Recorder MIME (single-shot): ${chosenMime} | ext: .${chosenExt}`);
       }
-
-      async function onStoppedSingleShot() {
-        const blob = new Blob(audioChunks, { type: chosenMime });
+      async function onStoppedSingleShot(){
+        const blob = new Blob(audioChunks,{ type: chosenMime });
         log(`Blob size: ${blob.size} bytes; type: ${blob.type}`);
-        if (!blob.size) { statusEl.textContent = 'No audio captured'; output.textContent = 'No audio captured.'; return; }
-
-        statusEl.textContent = 'Transcribing…';
-        output.textContent = 'Transcribing…';
-
-        try {
+        if(!blob.size){ statusEl.textContent='No audio captured'; output.textContent='No audio captured.'; return; }
+        statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
+        try{
           const dataUrl = await blobToDataUrl(blob);
-          const tr = await fetch('/api/transcribe', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: dataUrl })
-          });
+          const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ audio: dataUrl }) });
           const tdata = await tr.json();
-          if (!tr.ok || tdata.error) {
-            output.textContent = 'Transcription error.';
-            log(`Transcribe error: ${tdata.error || tr.statusText}${tdata.detail ? ' | ' + tdata.detail : ''}`);
-            statusEl.textContent = 'Error'; return;
-          }
+          if(!tr.ok || tdata.error){ output.textContent='Transcription error.'; log(`Transcribe error: ${tdata.error || tr.statusText}${tdata.detail? ' | '+tdata.detail:''}`); statusEl.textContent='Error'; return; }
+          const text = (tdata.text||'').trim();
+          if(!text){ statusEl.textContent='No speech detected'; output.textContent='No speech detected.'; return; }
+          if(/^(\s*search:|\s*web:)/i.test(text)){ statusEl.textContent='Searching…'; await sendMessage(text); statusEl.textContent='Ready'; return; }
+          statusEl.textContent='Asking…'; output.textContent = 'You said: '+text+'\nThinking…';
+          const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: text }) });
+          const cdata = await cr.json(); const reply = cdata.reply || '(no reply)';
+          output.textContent = 'You said: '+text+'\nAssistant: '+reply; statusEl.textContent='Ready'; await speak(reply);
+        }catch(e){ statusEl.textContent='Error'; output.textContent='Error during transcription or chat.'; log(`Client error: ${String(e)}`); }
+      }
+      function stopRecording(){ if(mediaRecorder && mediaRecorder.state!=='inactive') mediaRecorder.stop(); }
+      pressBtn.onmousedown = async ()=>{ statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
+      pressBtn.onmouseup   = ()=>{ statusEl.textContent='Processing…'; stopRecording(); };
+      pressBtn.onmouseleave= ()=>{ if(mediaRecorder && mediaRecorder.state==='recording'){ statusEl.textContent='Processing…'; stopRecording(); } };
+      pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
+      pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-          const text = (tdata.text || '').trim();
-          if (!text) { statusEl.textContent = 'No speech detected'; output.textContent = 'No speech detected.'; return; }
+      // ===== Realtime loop (debounced finalization) =====
+      let rtStream=null, rtRecorder=null, rtSpeaking=false, rtBufferText='', rtTranscribing=false, rtInterval=null, rtTick=0;
+      let inactivityTimer=null;
+      const CHUNK_MS = 800;
+      const INACTIVITY_MS = 1400;     // finalize if no new text for this long
+      const END_PUNCT_RE = /[.!?…]"?$/;
 
-          // Route voice "search:" via same path as typed
-          const isSearch = /^(\s*search:|\s*web:)/i.test(text);
-          if (isSearch) {
-            statusEl.textContent = 'Searching…';
-            await sendMessage(text);
-            statusEl.textContent = 'Ready';
-            return;
-          }
-
-          statusEl.textContent = 'Asking…';
-          output.textContent = 'You said: ' + text + '\nThinking…';
-
-          const cr = await fetch('/api/chat', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text })
-          });
-          const cdata = await cr.json();
-          const reply = cdata.reply || '(no reply)';
-          output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-          statusEl.textContent = 'Ready';
-          await speak(reply);
-
-        } catch (e) {
-          statusEl.textContent = 'Error';
-          output.textContent = 'Error during transcription or chat.';
-          log(`Client error: ${String(e)}`);
-        }
+      // dedupe helper: many STT chunks repeat previous text; prefer replacement over append
+      function mergePartial(prev, incoming){
+        if(!incoming) return prev;
+        if(incoming.startsWith(prev)) return incoming; // full replacement
+        if(prev && incoming && prev.endsWith(incoming)) return prev; // duplicate tail
+        // conservative append
+        return prev ? (prev + ' ' + incoming) : incoming;
       }
 
-      function stopRecording() {
-        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      function scheduleFinalize(){
+        if(inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(()=> finalizeUtterance(), INACTIVITY_MS);
       }
 
-      pressBtn.onmousedown = async () => {
-        statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)';
-        await startRecording();
-      };
-      pressBtn.onmouseup = () => { statusEl.textContent = 'Processing…'; stopRecording(); };
-      pressBtn.onmouseleave = () => { if (mediaRecorder && mediaRecorder.state === 'recording') { statusEl.textContent = 'Processing…'; stopRecording(); } };
-      pressBtn.ontouchstart = async (e) => { e.preventDefault(); statusEl.textContent = realtimeActive ? 'Recording… (press) — CHAT ON' : 'Recording… (hold)'; await startRecording(); };
-      pressBtn.ontouchend = (e) => { e.preventDefault(); statusEl.textContent = 'Processing…'; stopRecording(); };
+      function micConstraints(){ return { echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }; }
 
-      // ===== Realtime loop (CHAT ON) — requestData + auto-recovery =====
-      let rtStream = null, rtRecorder = null, rtSpeaking = false, rtBufferText = '', rtSilenceTicks = 0;
-      let rtTranscribing = false;    // prevent piling up /api/transcribe
-      let rtInterval = null;         // drives requestData() ticks
-      let rtTick = 0;                // tick counter
-      let rtZeroBytes = 0;           // consecutive zero-byte chunks
-
-      // Tunables
-      const CHUNK_MS = 800;          // tick period
-      const SILENCE_LIMIT = 4;       // ~3.2s
-      const MIN_UTTER_LEN = 12;
-      const END_PUNCT_RE = /[.!?…]$/;
-
-      function micConstraints(){
-        // Mobile-friendly audio constraints
-        return {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000,   // hint; browser may choose closest
-          sampleSize: 16
-        };
-      }
-
-      async function startRealtime() {
-        if (rtRecorder) return;
-        statusEl.textContent = 'CHAT mode: listening…';
-        rtBufferText = ''; rtSilenceTicks = 0; rtZeroBytes = 0; rtTick = 0;
-
-        try {
+      async function startRealtime(){
+        if(rtRecorder) return;
+        statusEl.textContent='CHAT mode: listening…';
+        rtBufferText=''; rtTick=0;
+        try{
           rtStream = await navigator.mediaDevices.getUserMedia({ audio: micConstraints() });
-
-          // Try preferred MIME, else fallback to browser default
-          try { rtRecorder = new MediaRecorder(rtStream, { mimeType: chosenMime }); }
-          catch { rtRecorder = new MediaRecorder(rtStream); }
-
+          try{ rtRecorder = new MediaRecorder(rtStream, { mimeType: chosenMime }); }
+          catch{ rtRecorder = new MediaRecorder(rtStream); }
           rtRecorder.ondataavailable = onRtChunk;
-          rtRecorder.onstop = () => log('[CHAT] recorder stopped');
-          rtRecorder.start(); // no timeslice; we drive requestData
-
-          // Force periodic chunks
-          rtInterval = setInterval(() => {
+          rtRecorder.onstop = ()=> log('[CHAT] recorder stopped');
+          rtRecorder.start(); // no timeslice, we drive requestData
+          rtInterval = setInterval(()=> {
             rtTick++;
-            try {
-              if (rtRecorder && rtRecorder.state === 'recording') {
-                rtRecorder.requestData();
-                // heartbeat for visibility
-                if (rtTick % 3 === 0) log(`[CHAT] tick ${rtTick}`);
-              }
-            } catch (e) {
-              log(`[CHAT] requestData error: ${String(e)}`);
-            }
+            try{ if(rtRecorder && rtRecorder.state==='recording') rtRecorder.requestData(); }catch(e){ log(`[CHAT] requestData error: ${String(e)}`); }
+            if(rtTick%3===0) log(`[CHAT] tick ${rtTick}`);
           }, CHUNK_MS);
-
           log(`[CHAT] Realtime started (${chosenMime}); forced chunks every ${CHUNK_MS}ms`);
-        } catch (err) {
+        }catch(err){
           log(`[CHAT] Failed to start: ${String(err)}`);
-          statusEl.textContent = 'CHAT error: mic unavailable';
+          statusEl.textContent='CHAT error: mic unavailable';
           stopRealtime();
         }
       }
 
-      async function stopRealtime() {
-        try { if (rtInterval) clearInterval(rtInterval); } catch {}
-        rtInterval = null;
-
-        try { if (rtRecorder && rtRecorder.state !== 'inactive') rtRecorder.stop(); } catch {}
-        rtRecorder = null;
-
-        try { if (rtStream) rtStream.getTracks().forEach(t => t.stop()); } catch {}
-        rtStream = null;
-
-        statusEl.textContent = 'CHAT OFF. Press-and-hold active.';
+      async function stopRealtime(){
+        try{ if(rtInterval) clearInterval(rtInterval); }catch{}
+        rtInterval=null;
+        try{ if(rtRecorder && rtRecorder.state!=='inactive') rtRecorder.stop(); }catch{}
+        rtRecorder=null;
+        try{ if(rtStream) rtStream.getTracks().forEach(t=>t.stop()); }catch{}
+        rtStream=null;
+        if(inactivityTimer){ clearTimeout(inactivityTimer); inactivityTimer=null; }
+        statusEl.textContent='CHAT OFF. Press-and-hold active.';
       }
 
-      async function onRtChunk(ev) {
-        if (!ev || !ev.data) return;
+      async function onRtChunk(ev){
+        if(!ev || !ev.data) return;
         const size = ev.data.size || 0;
         log(`[CHAT] chunk: ${size} bytes`);
 
-        if (size === 0) {
-          rtZeroBytes++;
-          // Auto-recover: if we get 5 zero-byte chunks in a row, restart with a safer MIME
-          if (rtZeroBytes >= 5) {
-            log('[CHAT] too many empty chunks — restarting recorder with fallback MIME');
-            await restartRealtimeWithFallback();
-          }
-          rtSilenceTicks++;
-          checkFinalize();
+        if(size === 0){
+          // no transcript update; do not finalize here—debounce handles it
           return;
         }
 
-        // Got data
-        rtZeroBytes = 0;
-        if (rtSpeaking) return;          // avoid feedback while speaking
-        if (rtTranscribing) return;      // drop if one is in flight
+        if(rtSpeaking || rtTranscribing) return;
 
         rtTranscribing = true;
-        try {
+        try{
           const dataUrl = await blobToDataUrl(ev.data);
-          const tr = await fetch('/api/transcribe', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ audio: dataUrl })
-          });
+          const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ audio: dataUrl }) });
           const tdata = await tr.json();
           const chunkText = (tdata && tdata.text || '').trim();
 
-          if (chunkText.length === 0) {
-            rtSilenceTicks++;
-          } else {
-            rtSilenceTicks = 0;
-            rtBufferText += (rtBufferText ? ' ' : '') + chunkText;
+          if(chunkText){
+            // update buffer with deduped partials
+            rtBufferText = mergePartial(rtBufferText, chunkText);
             output.textContent = `You (live): ${rtBufferText}`;
+
+            // if user ended with punctuation, finalize immediately
+            if(END_PUNCT_RE.test(rtBufferText.trim())){
+              if(inactivityTimer){ clearTimeout(inactivityTimer); inactivityTimer=null; }
+              finalizeUtterance();
+              return;
+            }
+
+            // reset inactivity timer on any new text
+            scheduleFinalize();
           }
-          checkFinalize();
-        } catch (err) {
+        }catch(err){
           log(`[CHAT] transcribe error: ${String(err)}`);
-        } finally {
+        }finally{
           rtTranscribing = false;
         }
       }
 
-      async function restartRealtimeWithFallback() {
-        // Stop current
-        try { if (rtInterval) clearInterval(rtInterval); } catch {}
-        try { if (rtRecorder && rtRecorder.state !== 'inactive') rtRecorder.stop(); } catch {}
-        try { if (rtStream) rtStream.getTracks().forEach(t => t.stop()); } catch {}
-
-        // Choose a safer MIME (step down the list)
-        const idx = Math.max(0, CANDIDATE_MIMES.indexOf(chosenMime));
-        const nextCandidates = CANDIDATE_MIMES.slice(idx + 1);
-        const alt = nextCandidates.find(m => {
-          try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
-        }) || null;
-        if (alt) {
-          chosenMime = alt;
-          log(`[CHAT] fallback MIME: ${alt}`);
-        } else {
-          log('[CHAT] no further MIME fallbacks available; using browser default');
-        }
-
-        // Restart
-        rtRecorder = null; rtStream = null; rtInterval = null; rtZeroBytes = 0; rtTick = 0;
-        await startRealtime();
-      }
-
-      function checkFinalize() {
-        const hasEndPunct = END_PUNCT_RE.test(rtBufferText.trim());
-        const longEnough = rtBufferText.trim().length >= MIN_UTTER_LEN;
-        if ((hasEndPunct && longEnough) || (rtSilenceTicks >= SILENCE_LIMIT && longEnough)) {
-          finalizeUtterance();
-        }
-      }
-
-      async function finalizeUtterance() {
+      async function finalizeUtterance(){
+        if(inactivityTimer){ clearTimeout(inactivityTimer); inactivityTimer=null; }
         const utterance = rtBufferText.trim();
-        if (!utterance) { rtBufferText = ''; return; }
-        rtBufferText = ''; rtSilenceTicks = 0;
+        rtBufferText = '';
+        if(!utterance) return;
 
-        await pauseRealtimeDuring(async () => {
-          statusEl.textContent = 'Thinking…';
+        await pauseRealtimeDuring(async ()=>{
+          statusEl.textContent='Thinking…';
           output.textContent = `You: ${utterance}\nThinking…`;
 
-          // Route "search:" voice to /api/search via sendMessage
-          if (/^(\s*search:|\s*web:)/i.test(utterance)) {
+          if(/^(\s*search:|\s*web:)/i.test(utterance)){
             await sendMessage(utterance);
-            statusEl.textContent = 'CHAT mode: listening…';
+            statusEl.textContent='CHAT mode: listening…';
             return;
           }
 
-          try {
-            const cr = await fetch('/api/chat', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: utterance })
-            });
+          try{
+            const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: utterance }) });
             const cdata = await cr.json();
             const reply = cdata.reply || '(no reply)';
             output.textContent = `You: ${utterance}\nAssistant: ${reply}`;
             await speak(reply);
-          } catch (err) {
+          }catch(err){
             log(`[CHAT] chat error: ${String(err)}`);
             output.textContent = `You: ${utterance}\nAssistant: (error)`;
-          } finally {
-            statusEl.textContent = 'CHAT mode: listening…';
+          }finally{
+            statusEl.textContent='CHAT mode: listening…';
           }
         });
       }
 
-      async function pauseRealtimeDuring(fn) {
+      async function pauseRealtimeDuring(fn){
         const wasActive = !!rtRecorder;
-        if (wasActive) { try { rtRecorder.stop(); } catch {} rtRecorder = null; }
-        try { await fn(); }
-        finally { if (realtimeActive) { await startRealtime(); } }
+        if(wasActive){ try{ rtRecorder.stop(); }catch{} rtRecorder=null; }
+        try{ await fn(); }
+        finally{ if(realtimeActive){ await startRealtime(); } }
       }
 
-      // ===== CHAT toggle logic =====
       function setRealtimeActive(on){
         realtimeActive = !!on;
-        rtToggle.setAttribute('aria-checked', realtimeActive ? 'true' : 'false');
+        rtToggle.setAttribute('aria-checked', realtimeActive ? 'true':'false');
         rtBadge.textContent = realtimeActive ? 'ON' : 'OFF';
         rtBadge.classList.toggle('off', !realtimeActive);
-        if (realtimeActive){ statusEl.textContent = 'CHAT mode: initializing…'; startRealtime(); }
+        if(realtimeActive){ statusEl.textContent='CHAT mode: initializing…'; startRealtime(); }
         else { stopRealtime(); }
       }
       function toggleRealtime(){
-        const next = !(rtToggle.getAttribute('aria-checked') === 'true');
+        const next = !(rtToggle.getAttribute('aria-checked')==='true');
         setRealtimeActive(next);
       }
       rtToggle.addEventListener('click', toggleRealtime);
-      rtToggle.addEventListener('keydown', (e)=>{ if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); toggleRealtime(); } });
+      rtToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
 
-      // Restart realtime if page regains focus (mobile browsers can pause timers/streams)
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && realtimeActive && !rtRecorder) {
+      document.addEventListener('visibilitychange', ()=>{
+        if(document.visibilityState==='visible' && realtimeActive && !rtRecorder){
           log('[CHAT] page visible — restarting realtime');
           startRealtime();
         }
       });
 
-      // Init (default OFF)
       setRealtimeActive(false);
     </script>
   </body>
