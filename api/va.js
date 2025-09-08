@@ -1,5 +1,6 @@
 // /api/va.js
 // Single serverless function that handles /api/chat, /api/transcribe, /api/speak, /api/search, /api/dispatch
+
 export const config = { api: { bodyParser: { sizeLimit: '25mb' } } };
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_BETA;
@@ -9,7 +10,6 @@ function notAllowed(res) { error(res, 405, 'Method not allowed'); }
 
 function routeFromReq(req) {
   // Extract first segment after /api/
-  // e.g. /api/transcribe -> "transcribe"
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/'); // ["api","transcribe", ...]
   return segs[1] || ''; // first part after "api"
@@ -31,7 +31,11 @@ async function openaiJSON(path, payload) {
   return r.json();
 }
 async function openaiForm(path, form) {
-  const r = await fetch(`https://api.openai.com/v1/${path}`, { method: 'POST', headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` }, body: form });
+  const r = await fetch(`https://api.openai.com/v1/${path}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+    body: form
+  });
   if (!r.ok) throw new Error(`OpenAI ${path} ${r.status} ${r.statusText}: ${await r.text().catch(()=> '')}`);
   return r.json();
 }
@@ -46,7 +50,8 @@ async function openaiBinary(path, payload) {
   return Buffer.from(ab);
 }
 
-// --- Handlers ---
+// ---------- Handlers ----------
+
 async function handleChat(req, res) {
   if (req.method !== 'POST') return notAllowed(res);
   if (!OPENAI_API_KEY) return error(res, 500, 'Missing OPENAI_API_KEY');
@@ -65,20 +70,41 @@ async function handleChat(req, res) {
 async function handleTranscribe(req, res) {
   if (req.method !== 'POST') return notAllowed(res);
   if (!OPENAI_API_KEY) return error(res, 500, 'Missing OPENAI_API_KEY');
+
   const { audio } = req.body || {};
   if (!audio) return error(res, 400, 'Missing "audio" (data URL)');
+
   try {
     const parsed = parseDataUrl(audio);
     if (!parsed) return error(res, 400, 'Invalid data URL');
-    const { mime, buf } = parsed;
-    const ext = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : mime.includes('mpeg') ? 'mp3' : 'webm';
+
+    // Normalize MIME + extension
+    let { mime, buf } = parsed;               // e.g. "audio/webm;codecs=opus"
+    const lower = (mime || '').toLowerCase();
+
+    // Pick a supported extension; default to webm
+    let ext = 'webm';
+    if (lower.includes('ogg') || lower.includes('oga')) ext = 'ogg';
+    else if (lower.includes('mp4')) ext = 'mp4';
+    else if (lower.includes('mpeg') || lower.includes('mpga')) ext = 'mp3';
+    else if (lower.includes('mp3')) ext = 'mp3';
+    else if (lower.includes('wav')) ext = 'wav';
+    else if (lower.includes('m4a')) ext = 'm4a';
+    else if (lower.includes('webm')) ext = 'webm';
+
+    // Force a clean, supported content-type for the upload
+    const forcedMime = `audio/${ext}`;
+
     const form = new FormData();
-    const blob = new Blob([buf], { type: mime });
+    const blob = new Blob([buf], { type: forcedMime });
     form.append('file', blob, `audio.${ext}`);
     form.append('model', 'whisper-1');
+
     const data = await openaiForm('audio/transcriptions', form);
     res.status(200).json({ text: data?.text || '' });
-  } catch (e) { error(res, 500, String(e)); }
+  } catch (e) {
+    error(res, 500, String(e));
+  }
 }
 
 async function handleSpeak(req, res) {
@@ -98,7 +124,7 @@ async function handleSearch(req, res) {
   if (req.method !== 'POST') return notAllowed(res);
   const { q } = req.body || {};
   if (!q) return error(res, 400, 'Missing q');
-  // Stub until you wire a provider
+  // Stub for now
   res.status(200).json({ results: [] });
 }
 
@@ -120,7 +146,7 @@ async function handleDispatch(req, res) {
   res.status(200).json({ status: 'ok', data, summary });
 }
 
-// --- Main handler ---
+// ---------- Main handler ----------
 export default async function handler(req, res) {
   const route = routeFromReq(req); // "chat" | "transcribe" | "speak" | "search" | "dispatch" | ...
   try {
