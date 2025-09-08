@@ -1,27 +1,21 @@
 // /api/[...va].js
-// One serverless function that handles:
-//   /api/chat, /api/transcribe, /api/speak, /api/search, /api/dispatch
-// Catch-all also supports /api/va/chat, /api/va/transcribe, etc.
+// Handles: /api/chat, /api/transcribe, /api/speak, /api/search, /api/dispatch
+// Also tolerant of /api/va/* but we won't use that in the client.
 
 export const config = { api: { bodyParser: { sizeLimit: '25mb' } } };
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_BETA;
 
-/* ----------------------------- helpers ----------------------------- */
-
 function error(res, code, msg) { res.status(code).json({ error: msg }); }
 function notAllowed(res) { error(res, 405, 'Method not allowed'); }
 
 function routeFromReq(req) {
-  // Support both /api/<route> and /api/va/<route>
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/'); // e.g. ['api','transcribe'] or ['api','va','transcribe']
-  let i = 1;
-  if (segs[1] === 'va') i = 2;
+  let i = 1; if (segs[1] === 'va') i = 2; // allow /api/va/.. too
   return segs[i] || '';
 }
 
-// Accepts data URLs like data:audio/webm;codecs=opus;base64,<...>
 function parseDataUrl(dataUrl) {
   if (typeof dataUrl !== 'string') return null;
   const comma = dataUrl.indexOf(',');
@@ -45,18 +39,15 @@ async function openaiJSON(path, payload) {
   if (!r.ok) throw new Error(`OpenAI ${path} ${r.status} ${r.statusText}: ${await r.text().catch(()=> '')}`);
   return r.json();
 }
-
 async function openaiForm(path, form) {
-  // Let fetch set the multipart boundary
   const r = await fetch(`https://api.openai.com/v1/${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
-    body: form,
+    body: form, // let fetch set multipart boundary
   });
   if (!r.ok) throw new Error(`OpenAI ${path} ${r.status} ${r.statusText}: ${await r.text().catch(()=> '')}`);
   return r.json();
 }
-
 async function openaiBinary(path, payload) {
   const r = await fetch(`https://api.openai.com/v1/${path}`, {
     method: 'POST',
@@ -97,10 +88,9 @@ async function handleTranscribe(req, res) {
     const parsed = parseDataUrl(audio);
     if (!parsed) return error(res, 400, 'Invalid data URL');
 
-    const { mime, buf } = parsed; // e.g. audio/webm;codecs=opus
+    const { mime, buf } = parsed; // e.g. "audio/webm;codecs=opus"
     const lower = (mime || '').toLowerCase();
 
-    // Pick an extension Whisper supports
     let ext = 'webm';
     if (lower.includes('ogg') || lower.includes('oga')) ext = 'ogg';
     else if (lower.includes('mp4')) ext = 'mp4';
@@ -110,9 +100,8 @@ async function handleTranscribe(req, res) {
     else if (lower.includes('m4a')) ext = 'm4a';
 
     const form = new FormData();
-    const cleanMime = `audio/${ext}`;
-    const blob = new Blob([buf], { type: cleanMime });
-    form.append('file', blob, `audio.${ext}`);
+    const blob = new Blob([buf], { type: `audio/${ext}` });
+    form.append('file', blob, `audio.${ext}`); // filename important
     form.append('model', 'whisper-1');
 
     const data = await openaiForm('audio/transcriptions', form);
