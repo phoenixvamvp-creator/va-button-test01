@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "functions": {
+    "api/va.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/va" }
   ]
