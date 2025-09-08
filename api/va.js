@@ -1,28 +1,31 @@
 // /api/va.js
+// Single serverless function for: /api/chat, /api/transcribe, /api/speak, /api/search, /api/dispatch
+// Works with vercel.json:
+// { "version": 2, "rewrites": [{ "source": "/api/(.*)", "destination": "/api/va" }] }
+
 export const config = { api: { bodyParser: { sizeLimit: '25mb' } } };
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_BETA;
 
-/* ---------------------------- helpers ---------------------------- */
+/* ----------------------------- helpers ----------------------------- */
 
 function error(res, code, msg) { res.status(code).json({ error: msg }); }
 function notAllowed(res) { error(res, 405, 'Method not allowed'); }
 function routeFromReq(req) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/');
+  const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/'); // ["api","..."]
   return segs[1] || '';
 }
 
-// Robust data URL parser: accepts extra params like ;codecs=opus before ;base64
+// Robust parser: accepts extra params like ;codecs=opus before ;base64
 function parseDataUrl(dataUrl) {
   if (typeof dataUrl !== 'string') return null;
   const comma = dataUrl.indexOf(',');
   if (!dataUrl.startsWith('data:') || comma === -1) return null;
-  const header = dataUrl.slice(5, comma);       // between "data:" and ","
-  const b64 = dataUrl.slice(comma + 1);         // after ","
+  const header = dataUrl.slice(5, comma); // after "data:"
+  const b64 = dataUrl.slice(comma + 1);
   if (!/;base64/i.test(header)) return null;
 
-  // MIME is the token immediately after "data:" up to first ";" (or entire header if no ;)
   const semi = header.indexOf(';');
   const mime = (semi === -1 ? header : header.slice(0, semi)).trim() || 'application/octet-stream';
   try { Buffer.from(b64, 'base64'); } catch { return null; }
@@ -58,13 +61,14 @@ async function openaiBinary(path, payload) {
   return Buffer.from(ab);
 }
 
-/* ---------------------------- handlers --------------------------- */
+/* ----------------------------- handlers ---------------------------- */
 
 async function handleChat(req, res) {
   if (req.method !== 'POST') return notAllowed(res);
   if (!OPENAI_API_KEY) return error(res, 500, 'Missing OPENAI_API_KEY');
   const { message } = req.body || {};
   if (!message || !String(message).trim()) return error(res, 400, 'Missing message');
+
   try {
     const data = await openaiJSON('chat/completions', {
       model: 'gpt-4o-mini',
@@ -86,10 +90,10 @@ async function handleTranscribe(req, res) {
     const parsed = parseDataUrl(audio);
     if (!parsed) return error(res, 400, 'Invalid data URL');
 
-    const { mime, buf } = parsed;
+    const { mime, buf } = parsed;                 // e.g. "audio/webm;codecs=opus"
     const lower = (mime || '').toLowerCase();
 
-    // Choose extension Whisper accepts (default webm)
+    // Choose extension accepted by Whisper (default webm)
     let ext = 'webm';
     if (lower.includes('ogg') || lower.includes('oga')) ext = 'ogg';
     else if (lower.includes('mp4')) ext = 'mp4';
@@ -98,10 +102,9 @@ async function handleTranscribe(req, res) {
     else if (lower.includes('wav')) ext = 'wav';
     else if (lower.includes('m4a')) ext = 'm4a';
 
-    // Node 18+ on Vercel supports global Blob/FormData
+    // Node/Vercel-safe: append raw Buffer with filename + contentType
     const form = new FormData();
-    const blob = new Blob([buf], { type: `audio/${ext}` }); // force clean type
-    form.append('file', blob, `audio.${ext}`);              // give a filename with valid extension
+    form.append('file', buf, { filename: `audio.${ext}`, contentType: `audio/${ext}` });
     form.append('model', 'whisper-1');
 
     const data = await openaiForm('audio/transcriptions', form);
@@ -115,10 +118,16 @@ async function handleTranscribe(req, res) {
 async function handleSpeak(req, res) {
   if (req.method !== 'POST') return notAllowed(res);
   if (!OPENAI_API_KEY) return error(res, 500, 'Missing OPENAI_API_KEY');
-  const { text, voice='alloy' } = req.body || {};
+  const { text, voice = 'alloy' } = req.body || {};
   if (!text || !String(text).trim()) return error(res, 400, 'Missing text');
+
   try {
-    const buf = await openaiBinary('audio/speech', { model: 'gpt-4o-mini-tts', voice, input: String(text), format: 'mp3' });
+    const buf = await openaiBinary('audio/speech', {
+      model: 'gpt-4o-mini-tts',
+      voice,
+      input: String(text),
+      format: 'mp3',
+    });
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).send(buf);
@@ -134,12 +143,12 @@ async function handleSearch(req, res) {
 
 function summarize(intent, p) {
   switch (intent) {
-    case 'searchDrive':    return `I would search Drive in the ${p.folder} folder for "${p.query}".`;
-    case 'searchSheets':   return `I would read range ${p.range} from sheet ${p.sheetName} in ${p.fileName}${p.query ? ` where ${p.query}` : ''}.`;
-    case 'adjustSheets':   return p.op === 'append' ? `I would append rows to ${p.sheetName} in ${p.fileName}.` : `I would set ${p.range} in ${p.sheetName} of ${p.fileName}.`;
+    case 'searchDrive':  return `I would search Drive in the ${p.folder} folder for "${p.query}".`;
+    case 'searchSheets': return `I would read range ${p.range} from sheet ${p.sheetName} in ${p.fileName}${p.query ? ` where ${p.query}` : ''}.`;
+    case 'adjustSheets': return p.op === 'append' ? `I would append rows to ${p.sheetName} in ${p.fileName}.` : `I would set ${p.range} in ${p.sheetName} of ${p.fileName}.`;
     case 'adjustCalendar': return p.action === 'create' ? `I would create a calendar event "${p.title}" ${p.when}.` : `I would move "${p.title}" to ${p.when}.`;
-    case 'searchWeb':      return `I would search the web for "${p.query}".`;
-    default:               return `I didn’t classify that request yet.`;
+    case 'searchWeb':    return `I would search the web for "${p.query}".`;
+    default:             return `I didn’t classify that request yet.`;
   }
 }
 async function handleDispatch(req, res) {
@@ -150,10 +159,10 @@ async function handleDispatch(req, res) {
   res.status(200).json({ status: 'ok', data, summary });
 }
 
-/* ------------------------------ router --------------------------- */
+/* -------------------------------- router ------------------------------- */
 
 export default async function handler(req, res) {
-  const route = routeFromReq(req);
+  const route = routeFromReq(req); // "", "chat", "transcribe", "speak", "search", "dispatch", ...
   try {
     if (route === '' && req.method === 'GET') {
       return res.status(200).json({ ok: true, routes: ['chat','transcribe','speak','search','dispatch'] });
