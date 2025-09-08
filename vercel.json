@@ -2,7 +2,7 @@
   "version": 2,
   "functions": {
     "api/va.js": {
-      "runtime": "nodejs20.x"
+      "runtime": "vercel-nodejs@2.15.10"
     }
   },
   "rewrites": [
