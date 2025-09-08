@@ -160,7 +160,7 @@
       // ---------------- CHAT realtime (batching + guarded fetch) ----------------
       let realtimeActive=false, rtStream=null, rtRecorder=null, rtInterval=null;
       let rtChunks=[], rtBufferText='';
-      const CHUNK_MS=400, SEND_MS=1200;
+      const SEND_MS=1200;
 
       async function startRealtime(){
         if(rtRecorder) return;
@@ -208,7 +208,7 @@
           }
           const text = (body.text || '').trim();
           if (text) {
-            rtBufferText = text; // simple replace (could merge incrementally)
+            rtBufferText = text;
             output.textContent = `You (live): ${rtBufferText}`;
           }
         }catch(e){
