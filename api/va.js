@@ -1,7 +1,6 @@
 // /api/va.js
-// Single serverless function for: /api/chat, /api/transcribe, /api/speak, /api/search, /api/dispatch
-// Works with vercel.json:
-// { "version": 2, "functions": { "api/va.js": { "runtime": "nodejs20.x" } }, "rewrites": [{ "source": "/api/(.*)", "destination": "/api/va" }] }
+// Single serverless function for: /api/va/chat, /api/va/transcribe, /api/va/speak, /api/va/search, /api/va/dispatch
+// Also accepts /api/chat, /api/transcribe, ... (no rewrite needed)
 
 export const config = { api: { bodyParser: { sizeLimit: '25mb' } } };
 
@@ -11,10 +10,14 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_
 
 function error(res, code, msg) { res.status(code).json({ error: msg }); }
 function notAllowed(res) { error(res, 405, 'Method not allowed'); }
+
 function routeFromReq(req) {
+  // Support both /api/<route> and /api/va/<route>
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/'); // ["api","..."]
-  return segs[1] || '';
+  const segs = url.pathname.replace(/^\/+|\/+$/g, '').split('/'); // e.g. ['api','va','transcribe']
+  let i = 1;                        // default: first after 'api'
+  if (segs[1] === 'va') i = 2;      // if /api/va/..., shift one more
+  return segs[i] || '';
 }
 
 // Robust parser: accepts params like ;codecs=opus before ;base64
@@ -22,7 +25,7 @@ function parseDataUrl(dataUrl) {
   if (typeof dataUrl !== 'string') return null;
   const comma = dataUrl.indexOf(',');
   if (!dataUrl.startsWith('data:') || comma === -1) return null;
-  const header = dataUrl.slice(5, comma); // after "data:"
+  const header = dataUrl.slice(5, comma);
   const b64 = dataUrl.slice(comma + 1);
   if (!/;base64/i.test(header)) return null;
 
@@ -41,8 +44,9 @@ async function openaiJSON(path, payload) {
   if (!r.ok) throw new Error(`OpenAI ${path} ${r.status} ${r.statusText}: ${await r.text().catch(()=> '')}`);
   return r.json();
 }
+
 async function openaiForm(path, form) {
-  // No Content-Type header: let fetch set the multipart boundary
+  // Important: let fetch set the multipart boundary
   const r = await fetch(`https://api.openai.com/v1/${path}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
@@ -51,6 +55,7 @@ async function openaiForm(path, form) {
   if (!r.ok) throw new Error(`OpenAI ${path} ${r.status} ${r.statusText}: ${await r.text().catch(()=> '')}`);
   return r.json();
 }
+
 async function openaiBinary(path, payload) {
   const r = await fetch(`https://api.openai.com/v1/${path}`, {
     method: 'POST',
@@ -91,7 +96,7 @@ async function handleTranscribe(req, res) {
     const parsed = parseDataUrl(audio);
     if (!parsed) return error(res, 400, 'Invalid data URL');
 
-    const { mime, buf } = parsed;                 // e.g. "audio/webm;codecs=opus"
+    const { mime, buf } = parsed;         // e.g. "audio/webm;codecs=opus"
     const lower = (mime || '').toLowerCase();
 
     // Choose extension accepted by Whisper (default webm)
@@ -103,11 +108,10 @@ async function handleTranscribe(req, res) {
     else if (lower.includes('wav')) ext = 'wav';
     else if (lower.includes('m4a')) ext = 'm4a';
 
-    // Use Blob + filename (Node 20 on Vercel supports global Blob/FormData)
+    // Use Blob + filename (Node 18/20 on Vercel supports global Blob/FormData)
     const form = new FormData();
-    const cleanMime = `audio/${ext}`;
-    const blob = new Blob([buf], { type: cleanMime });   // ensure clean MIME
-    form.append('file', blob, `audio.${ext}`);           // proper filename + extension
+    const blob = new Blob([buf], { type: `audio/${ext}` });
+    form.append('file', blob, `audio.${ext}`);
     form.append('model', 'whisper-1');
 
     const data = await openaiForm('audio/transcriptions', form);
