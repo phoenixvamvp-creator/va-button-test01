@@ -1,10 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "api/va.js": {
-      "runtime": "vercel-nodejs@2.15.10"
-    }
-  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/va" }
   ]
