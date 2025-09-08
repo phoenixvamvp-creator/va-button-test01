@@ -76,7 +76,7 @@
       }
       async function speak(text){
         try{
-          const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, voice:'alloy' }) });
+          const r = await fetch('/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, voice:'alloy' }) });
           if(!r.ok) return;
           const buf = await r.arrayBuffer();
           const url = URL.createObjectURL(new Blob([buf],{type:'audio/mpeg'}));
@@ -88,7 +88,7 @@
       async function sendMessage(msg){
         output.textContent='Thinking…';
         try{
-          const r=await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: msg }) });
+          const r=await fetch('/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: msg }) });
           const data=await r.json();
           const reply=data.reply || data.error || '(no reply)';
           output.textContent=reply;
@@ -117,7 +117,7 @@
 
         try{
           const dataUrl = await blobToDataUrl(blob);
-          const tr = await fetch('/api/transcribe',{
+          const tr = await fetch('/transcribe',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ audio: dataUrl })
@@ -138,7 +138,7 @@
           statusEl.textContent = 'Asking…';
           output.textContent = 'You said: ' + text + '\nThinking…';
 
-          const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
+          const cr = await fetch('/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
           const cdata = await cr.json();
           const reply = cdata.reply || '(no reply)';
           output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
@@ -194,7 +194,7 @@
         rtChunks = [];
         const dataUrl = await blobToDataUrl(seg);
         try{
-          const tr = await fetch('/api/transcribe',{
+          const tr = await fetch('/transcribe',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ audio: dataUrl })
