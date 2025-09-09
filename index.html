@@ -124,16 +124,33 @@ async function getMic(){
   }catch(e){ log(`[MIC] denied: ${e?.name||'Error'} ${e?.message||''}`); throw e; }
 }
 
-// One-time mic prime so CHAT doesn't need Self-Test first
+// One-time mic + encoder warm-up so CHAT doesn't need Self-Test first
 let micPrimedOnce = false;
 async function ensureMicPrimedOnce() {
   if (micPrimedOnce) return;
   try {
-    await primeAudio();
-    const s = await getMic();
-    s.getTracks().forEach(t=>t.stop());
+    await primeAudio();                       // unlock autoplay
+    const s = await getMic();                 // permission prompt
+
+    // Warm the encoder with a tiny hidden recording and discard it
+    let tmpRec;
+    try { tmpRec = new MediaRecorder(s, { mimeType: REC_MIME }); }
+    catch { tmpRec = new MediaRecorder(s); }
+
+    await new Promise((resolve) => {
+      const chunks = [];
+      tmpRec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      tmpRec.onstop = resolve;
+      tmpRec.start(300);                      // ~0.3s to ensure a self-contained blob
+      setTimeout(() => {
+        try { tmpRec.requestData && tmpRec.requestData(); } catch {}
+        try { tmpRec.stop(); } catch {}
+      }, 400);
+    });
+
+    s.getTracks().forEach(t=>t.stop());       // release
     micPrimedOnce = true;
-    log('[PRIME] mic primed on first toggle');
+    log('[PRIME] mic+encoder warmed up');
   } catch (e) {
     log(`[PRIME] mic prime failed: ${String(e)}`);
   }
@@ -216,8 +233,8 @@ function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.sto
    Accumulate segments → one Blob per utterance (fixes "Invalid file format").
    Optimistic toggle with clear logs.
 ============================================================================= */
-const CHUNK_MS        = 900;   // recorder emits ~1s chunks
-const SILENCE_MS      = 2200;  // finalize after this long with no chunk
+const CHUNK_MS        = 900;   // recorder emits ~1s segments
+const SILENCE_MS      = 2200;  // finalize after this long with no segment
 const MIN_CHUNK_BYTES = 800;   // ignore micro-chunks
 
 let rtStream=null, rtRecorder=null;
@@ -262,6 +279,7 @@ async function toggleRealtime(){
 
 async function startRealtime(){
   log('[CHAT] starting realtime…');
+  await ensureMicPrimedOnce();             // belt-and-braces
   await primeAudio();
   rtStream = await getMic();
   let rec;
