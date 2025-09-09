@@ -92,7 +92,7 @@
 
       // ---------- Small helpers ----------
       function mergeTranscript(oldText, newText){
-        if (!oldText) return newText.trim();
+        if (!oldText) return (newText||'').trim();
         if (!newText) return oldText;
         const a = oldText.trim(), b = newText.trim();
         if (b.startsWith(a)) return b;        // extended prefix
@@ -153,13 +153,14 @@
         audioChunks=[];
         mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) { audioChunks.push(e.data); log(`[HOLD] chunk ${e.data.size} bytes`);} };
         mediaRecorder.onstop = onStopped;
-        mediaRecorder.start(); // single-shot, we stop to flush
+        mediaRecorder.start(); // single-shot, stop to flush
         log(`[HOLD] Recorder MIME: ${supported}`);
       }
       async function onStopped(){
-        const blob=new Blob(audioChunks,{type:supported});
-        log(`[HOLD] total blob ${blob.size} bytes from ${audioChunks.length} chunks`);
-        if(!blob.size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
+        const blob = audioChunks.length ? audioChunks[audioChunks.length-1] : null; // use last full blob
+        const size = blob ? blob.size : 0;
+        log(`[HOLD] final blob ${size} bytes from ${audioChunks.length} chunks`);
+        if(!blob || !size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
         statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
 
         try{
@@ -196,12 +197,13 @@
       pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent='Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-      // ---------------- CHAT realtime (continuous chunks + multi-turn) ----------------
+      // ---------------- CHAT realtime (single-chunk uploads + multi-turn) ----------------
       let rtStream=null, rtRecorder=null, rtInterval=null, rtSilenceTimer=null;
       let rtChunks=[], rtBufferText='', lastHeardAt=0, ackSpoken=false;
-      const CHUNK_MS   = 500;   // MediaRecorder emits data every 500ms
-      const SEND_MS    = 1000;  // upload every second
+      const CHUNK_MS   = 700;   // recorder emits a chunk every ~700ms
+      const SEND_MS    = 800;   // check/send every 800ms
       const SILENCE_MS = 1800;  // send to chat after ~1.8s silence
+      const MAX_PER_TICK = 2;   // process at most 2 chunks per tick
 
       async function startRealtime(){
         if(rtRecorder) return;
@@ -238,29 +240,35 @@
       }
 
       async function sendBatch(){
-        // Fallback nudge: request the recorder to flush a chunk if none arrived
+        // Nudge recorder to flush if nothing arrived
         try { if (rtRecorder && rtRecorder.state==='recording' && rtChunks.length===0 && rtRecorder.requestData) rtRecorder.requestData(); } catch {}
+
         if(!rtChunks.length) return;
 
-        const segs = rtChunks.splice(0, rtChunks.length); // drain queue
-        const seg = new Blob(segs, { type: supported });
-        log(`[CHAT] uploading batch: ${segs.length} chunks, ${seg.size} bytes`);
-        const dataUrl = await blobToDataUrl(seg);
-        try{
-          const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
-          const ct = tr.headers.get('content-type') || '';
-          const body = ct.includes('application/json') ? await tr.json() : { error: await tr.text() };
+        const take = Math.min(rtChunks.length, MAX_PER_TICK);
+        for (let i=0;i<take;i++){
+          const single = rtChunks.shift();
+          if (!single || !single.size) continue;
 
-          if (!tr.ok || body.error) { log(`[CHAT] transcribe server error: ${body.error || tr.statusText}`); return; }
-          const text = (body.text || '').trim();
-          if (text) {
-            if (!ackSpoken) { ackSpoken = true; speak('One moment please'); }
-            rtBufferText = mergeTranscript(rtBufferText, text);
-            lastHeardAt = Date.now();
-            output.textContent = `You (live): ${rtBufferText}`;
+          log(`[CHAT] uploading chunk ${single.size} bytes`);
+          const dataUrl = await blobToDataUrl(single);
+
+          try{
+            const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
+            const ct = tr.headers.get('content-type') || '';
+            const body = ct.includes('application/json') ? await tr.json() : { error: await tr.text() };
+
+            if (!tr.ok || body.error) { log(`[CHAT] transcribe server error: ${body.error || tr.statusText}`); continue; }
+            const text = (body.text || '').trim();
+            if (text) {
+              if (!ackSpoken) { ackSpoken = true; speak('One moment please'); }
+              rtBufferText = mergeTranscript(rtBufferText, text);
+              lastHeardAt = Date.now();
+              output.textContent = `You (live): ${rtBufferText}`;
+            }
+          }catch(e){
+            log(`[CHAT] transcribe network error: ${String(e)}`);
           }
-        }catch(e){
-          log(`[CHAT] transcribe network error: ${String(e)}`);
         }
       }
 
@@ -297,7 +305,7 @@
       rtToggle.addEventListener('click', toggleRealtime);
       rtToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
 
-      // ---------------- One-click Self-Test ----------------
+      // ---------------- One-click Self-Test (single complete file) ----------------
       selfTestBtn.onclick = async () => {
         log('[SELFTEST] starting…');
         try{
@@ -307,17 +315,22 @@
 
           const stream = await requestMic();
           const rec = new MediaRecorder(stream, { mimeType: supported });
-          const chunks=[]; rec.ondataavailable = e=>{ if(e.data && e.data.size) { chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size} bytes`);} };
-          // IMPORTANT: use timeslice so chunks arrive during the 3s recording
-          rec.start(500);
-          log('[SELFTEST] recording 3s… please say: "testing testing one two"');
+          const chunks=[];
+          rec.ondataavailable = e=>{ if(e.data && e.data.size) { chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size} bytes`);} };
+
+          // record ~3s WITHOUT timeslice so we get one proper file at stop
+          rec.start();
+          log('[SELFTEST] recording ~3s… please say: "testing testing one two"');
           await new Promise(res=>setTimeout(res,3000));
-          // request final flush
           try { rec.requestData && rec.requestData(); } catch {}
           rec.stop();
-          await new Promise(res=>rec.onstop=res); stream.getTracks().forEach(t=>t.stop());
-          const blob = new Blob(chunks,{type:supported});
-          log(`[SELFTEST] total blob ${blob.size} bytes from ${chunks.length} chunks`);
+          await new Promise(res=>rec.onstop=res);
+          stream.getTracks().forEach(t=>t.stop());
+
+          const blob = chunks.length ? chunks[chunks.length-1] : null; // last full chunk
+          if (!blob || !blob.size) { log('[SELFTEST] no audio captured'); return; }
+          log(`[SELFTEST] final blob ${blob.size} bytes`);
+
           const dataUrl = await blobToDataUrl(blob);
 
           const r2 = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
