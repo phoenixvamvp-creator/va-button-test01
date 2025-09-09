@@ -197,20 +197,18 @@ async function holdStart(){
 }
 function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.stop(); }catch{} }
 
-/* =============================================================================
+  /* =============================================================================
    SECTION 6 — REALTIME CHAT (keeps listening, multi-turn)
-   Key points:
-   - Never concatenate MediaRecorder chunks.
-   - Ignore tiny blobs (< 800 B) that aren’t valid audio files.
-   - Use *chunk arrival* as “still speaking” signal; finalize after SILENCE_MS with no arrivals.
+   Fix: accumulate segments into ONE Blob per utterance before transcribing.
 ============================================================================= */
 const CHUNK_MS        = 900;   // recorder emits ~1s chunks
-const SEND_TICK_MS    = 500;   // how often we try to send pending chunks
-const SILENCE_MS      = 2200;  // finalize if no meaningful chunk for this long
-const MIN_CHUNK_BYTES = 800;   // accept small Android chunks; ignore 0/55/168 B
+const SILENCE_MS      = 2200;  // finalize after this long with no chunk
+const MIN_CHUNK_BYTES = 800;   // ignore micro-chunks
 
 let rtStream=null, rtRecorder=null;
-let rtQueue=[], rtLiveText='', rtSendTimer=null, rtSilenceTimer=null, lastChunkAt=0;
+let rtChunks=[];                // ← collect segments for the current utterance
+let rtLiveHint='', lastChunkAt=0;
+let rtSilenceTimer=null;
 
 function setChatToggle(on){
   chatToggle.setAttribute('aria-checked', on?'true':'false');
@@ -223,6 +221,7 @@ chatToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.
 async function toggleRealtime(){
   const on = chatToggle.getAttribute('aria-checked')==='true';
   if(on){ await stopRealtime(); setChatToggle(false); statusEl.textContent='CHAT OFF. Press-and-hold active.'; return; }
+  await ensureMicPrimedOnce?.();           // if you added the prime-once helper
   await startRealtime(); setChatToggle(true); statusEl.textContent='CHAT mode: listening…';
 }
 
@@ -231,71 +230,66 @@ async function startRealtime(){
   rtStream = await getMic();
   try{ rtRecorder = new MediaRecorder(rtStream,{ mimeType: REC_MIME }); } catch { rtRecorder = new MediaRecorder(rtStream); }
 
-  // reset state for a new session
-  rtQueue=[]; rtLiveText=''; lastChunkAt=0;
+  // reset state
+  rtChunks=[]; rtLiveHint=''; lastChunkAt=0;
 
-  // Each chunk is its own WebM; DO NOT concatenate.
+  // Collect segments, but DO NOT send them individually.
   rtRecorder.ondataavailable = (ev)=>{
     if(ev.data && ev.data.size){
-      rtQueue.push(ev.data);
-      if(ev.data.size >= MIN_CHUNK_BYTES) lastChunkAt = Date.now(); // any meaningful chunk = user still speaking
-      log(`[CHAT] chunk ${ev.data.size} bytes (queue=${rtQueue.length})`);
+      if(ev.data.size >= MIN_CHUNK_BYTES){
+        rtChunks.push(ev.data);
+        lastChunkAt = Date.now();
+        // Optional UX hint so user sees it's listening
+        rtLiveHint = '…';
+        output.textContent = `You (live): ${rtLiveHint}`;
+      } else {
+        log(`[CHAT] skip tiny ${ev.data.size}B`);
+      }
     }
   };
+
   rtRecorder.start(CHUNK_MS);
   log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${REC_MIME})`);
 
-  // timers
-  rtSendTimer    = setInterval(sendPendingChunks, SEND_TICK_MS);
+  // Check for silence to finalize a turn
   rtSilenceTimer = setInterval(checkFinalizeTurn, 250);
 }
 
 async function stopRealtime(){
-  try{ if(rtSendTimer) clearInterval(rtSendTimer); }catch{}
   try{ if(rtSilenceTimer) clearInterval(rtSilenceTimer); }catch{}
-  rtSendTimer=null; rtSilenceTimer=null;
+  rtSilenceTimer=null;
 
   try{ if(rtRecorder && rtRecorder.state!=='inactive') rtRecorder.stop(); }catch{}
   rtRecorder=null;
 
   try{ if(rtStream) rtStream.getTracks().forEach(t=>t.stop()); }catch{}
   rtStream=null;
-}
 
-async function sendPendingChunks(){
-  if(!rtQueue.length) return;
-  // gently drain the queue; never fuse files together
-  const take = Math.min(rtQueue.length, 3);
-  for(let i=0;i<take;i++){
-    const blob = rtQueue.shift();
-    if(!blob || !blob.size) continue;
-    if(blob.size < MIN_CHUNK_BYTES){ log(`[CHAT] skip tiny ${blob.size}B`); continue; }
-
-    try{
-      const text = await callTranscribe(await blobToDataUrl(blob));
-      if(text){
-        rtLiveText = mergeTranscript(rtLiveText, text);
-        output.textContent = `You (live): ${rtLiveText}`;
-      }
-    }catch(e){ log(`[CHAT] transcribe error: ${String(e)}`); }
-  }
+  rtChunks=[]; rtLiveHint=''; lastChunkAt=0;
 }
 
 async function checkFinalizeTurn(){
-  if(!rtLiveText) return;                   // nothing to send yet
-  if(Date.now() - lastChunkAt < SILENCE_MS) return; // still speaking
+  if(!rtChunks.length) return;                        // nothing captured yet
+  if(Date.now() - lastChunkAt < SILENCE_MS) return;   // still speaking
 
-  const toSend = rtLiveText;
-  rtLiveText = '';                          // clear for next turn
-  output.textContent = `You: ${toSend}\nThinking…`;
+  // Build ONE proper file for the utterance
+  const blob = new Blob(rtChunks, { type: REC_MIME });
+  rtChunks = [];                                      // clear for next turn
+  rtLiveHint = '';
 
+  output.textContent = `You (live): (processing…)`;
   try{
-    const reply = await callChat(toSend);
-    output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
+    const text = await callTranscribe(await blobToDataUrl(blob));
+    if(!text){ output.textContent='(no speech detected)'; return; }
+
+    output.textContent = `You: ${text}\nThinking…`;
+    const reply = await callChat(text);
+    output.textContent = `You: ${text}\nAssistant: ${reply}`;
     await callSpeak(reply);
-    // Do NOT stop recorder; keep listening for next sentence
-    lastChunkAt = 0; // ensure new turn starts cleanly
-  }catch(e){ log(`[CHAT] chat error: ${String(e)}`); output.textContent='Chat error.'; }
+  }catch(e){
+    log(`[CHAT] finalize error: ${String(e)}`);
+    output.textContent = 'Transcribe/chat error.';
+  }
 }
 
 /* =============================================================================
