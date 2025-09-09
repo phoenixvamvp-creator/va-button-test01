@@ -82,12 +82,55 @@
       async function speak(text){
         try{
           const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, voice:'alloy' }) });
-          const ct = r.headers.get('content-type')||'';
+        const ct = r.headers.get('content-type')||'';
           if(!r.ok){ log(`[TTS] HTTP ${r.status} ${r.statusText}: ${ct}`); return; }
           const buf = await r.arrayBuffer();
           const url = URL.createObjectURL(new Blob([buf],{type:'audio/mpeg'}));
           const a = new Audio(url); a.play().catch(err=>log(`[TTS] play blocked: ${String(err)}`));
         }catch(e){ log(`[TTS] error: ${String(e)}`); }
+      }
+
+      // ---------- Small helpers ----------
+      function mergeTranscript(oldText, newText){
+        // If newText includes oldText as a prefix (Whisper chunk is "more complete"), replace.
+        if (!oldText) return newText.trim();
+        if (!newText) return oldText;
+        const a = oldText.trim();
+        const b = newText.trim();
+        if (b.length >= a.length - 4 && b.startsWith(a.slice(0, Math.min(a.length, 12)))) {
+          return b;
+        }
+        if (a.endsWith(b)) return a; // duplicate tail
+        if (b.endsWith(a)) return b; // duplicate head
+        // Otherwise append with a space.
+        return (a + (a.endsWith(' ') ? '' : ' ') + b).trim();
+      }
+
+      async function primeAudio() {
+        // Play a tiny silent buffer to unlock autoplay on some mobile browsers.
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const src = ctx.createBufferSource();
+          src.buffer = ctx.createBuffer(1, 1, 22050);
+          src.connect(ctx.destination);
+          src.start(0);
+          await new Promise(r => setTimeout(r, 30));
+          ctx.close();
+          log('[PRIME] audio unlocked');
+        } catch (e) { log(`[PRIME] audio unlock error: ${String(e)}`); }
+      }
+
+      async function requestMic() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }
+          });
+          log('[MIC] permission granted');
+          return stream;
+        } catch (err) {
+          log(`[MIC] denied: ${err?.name||'Error'} ${err?.message||''}`);
+          throw err;
+        }
       }
 
       // ---------------- Text → Chat ----------------
@@ -100,7 +143,7 @@
           if (!r.ok || data.error){ output.textContent=`Chat error: ${data.error||r.statusText}`; log(`[CHAT] server error: ${data.error||r.statusText}`); return; }
           const reply=data.reply || '(no reply)';
           output.textContent=reply;
-          await speak('One moment please'); // quick ack
+          await speak('One moment please');
           await speak(reply);
         }catch(e){ output.textContent='Network error'; log(`[CHAT] network error: ${String(e)}`); }
       }
@@ -111,7 +154,7 @@
       let mediaRecorder, audioChunks=[];
       async function startRecording() {
         if (!navigator.mediaDevices?.getUserMedia) { output.textContent='Mic not supported'; return; }
-        const stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+        const stream = await requestMic();
         try { mediaRecorder=new MediaRecorder(stream,{ mimeType: supported }); } catch { mediaRecorder=new MediaRecorder(stream); }
         audioChunks=[];
         mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) audioChunks.push(e.data); };
@@ -158,18 +201,21 @@
       pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent='Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-      // ---------------- CHAT realtime (batching + silence send) ----------------
+      // ---------------- CHAT realtime (primed, merged, multi-turn) ----------------
       let rtStream=null, rtRecorder=null, rtInterval=null, rtSilenceTimer=null;
       let rtChunks=[], rtBufferText='', lastHeardAt=0, ackSpoken=false;
-      const SEND_MS=1200;       // batch upload period
-      const SILENCE_MS=1600;    // send to /api/chat after ~1.6s of silence
+      const SEND_MS=900;        // a bit faster batches
+      const SILENCE_MS=2000;    // wait a little longer before sending to chat
 
       async function startRealtime(){
         if(rtRecorder) return;
         statusEl.textContent='CHAT mode: listening…';
         rtBufferText=''; rtChunks=[]; ackSpoken=false; lastHeardAt=0;
+
+        // PRIME both mic and audio so you don't need Self-Test
+        try { await primeAudio(); } catch {}
         try{
-          rtStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 } });
+          rtStream = await requestMic();
           try{ rtRecorder=new MediaRecorder(rtStream,{ mimeType: supported }); }catch{ rtRecorder=new MediaRecorder(rtStream); }
           rtRecorder.ondataavailable = e => { if(e.data && e.data.size) rtChunks.push(e.data); };
           rtRecorder.start();
@@ -210,19 +256,22 @@
           const text = (body.text || '').trim();
           if (text) {
             if (!ackSpoken) { ackSpoken = true; speak('One moment please'); }
-            rtBufferText = text; lastHeardAt = Date.now();
+            rtBufferText = mergeTranscript(rtBufferText, text);
+            lastHeardAt = Date.now();
             output.textContent = `You (live): ${rtBufferText}`;
           }
-        }catch(e){ log(`[CHAT] transcribe network error: ${String(e)}`); }
+        }catch(e){
+          log(`[CHAT] transcribe network error: ${String(e)}`);
+        }
       }
 
       async function checkSilenceAndSend(){
-        if (!rtBufferText) return;         // nothing recognized yet
+        if (!rtBufferText) return;
         const idle = Date.now() - lastHeardAt;
-        if (idle < SILENCE_MS) return;     // still talking / not long enough silence
+        if (idle < SILENCE_MS) return;
 
         const toSend = rtBufferText;
-        rtBufferText = '';                 // clear buffer for next turn
+        rtBufferText = '';                    // clear for next turn
         try{
           output.textContent = `You: ${toSend}\nThinking…`;
           const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: toSend }) });
@@ -232,7 +281,8 @@
 
           const reply = data.reply || '(no reply)';
           output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
-          ackSpoken = false;   // allow next-turn ack
+          ackSpoken = false;                  // allow next-turn ack
+          lastHeardAt = 0;                    // ready for a fresh utterance
           await speak(reply);
         }catch(e){ log(`[CHAT] chat network error: ${String(e)}`); }
       }
@@ -248,17 +298,15 @@
       rtToggle.addEventListener('click', toggleRealtime);
       rtToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
 
-      // ---------------- One-click Self-Test (no devtools required) ----------------
+      // ---------------- One-click Self-Test ----------------
       selfTestBtn.onclick = async () => {
         log('[SELFTEST] starting…');
         try{
-          // 1) Quick chat ping
           const r1 = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message:'Say "hello" in five words.' })});
           const t1 = r1.headers.get('content-type')||''; const j1 = t1.includes('application/json') ? await r1.json() : { error: await r1.text() };
           log(`[SELFTEST] chat: ${r1.ok ? 'OK' : 'ERR'} ${j1.error ? j1.error : (j1.reply||'')}`);
 
-          // 2) 2s mic capture
-          const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+          const stream = await requestMic();
           const rec = new MediaRecorder(stream, { mimeType: supported });
           const chunks=[]; rec.ondataavailable = e=>{ if(e.data && e.data.size) chunks.push(e.data); };
           rec.start(); log('[SELFTEST] recording 2s… please say: "testing testing"');
@@ -266,12 +314,10 @@
           await new Promise(res=>rec.onstop=res); stream.getTracks().forEach(t=>t.stop());
           const blob = new Blob(chunks,{type:supported}); const dataUrl = await blobToDataUrl(blob);
 
-          // 3) Transcribe
           const r2 = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
           const t2 = r2.headers.get('content-type')||''; const j2 = t2.includes('application/json') ? await r2.json() : { error: await r2.text() };
           log(`[SELFTEST] transcribe: ${r2.ok ? 'OK' : 'ERR'} ${j2.error ? j2.error : (j2.text||'')}`);
 
-          // 4) Send transcript back to chat + TTS it
           if (j2.text){
             const r3 = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: `You heard: ${j2.text}. Reply with a short acknowledgement.` }) });
             const t3 = r3.headers.get('content-type')||''; const j3 = t3.includes('application/json') ? await r3.json() : { error: await r3.text() };
@@ -283,7 +329,6 @@
       };
 
       // init
-      setRealtimeActive(false);
       log(`[INIT] MediaRecorder: ${supported}`);
     </script>
   </body>
