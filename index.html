@@ -79,7 +79,12 @@ const CANDIDATE_MIMES = [
 const supported = CANDIDATE_MIMES.find(t => {
   try { return window.MediaRecorder?.isTypeSupported?.(t); } catch { return false; }
 }) || 'audio/webm';
-log(`[INIT] MediaRecorder uses ${supported}`);
+log(`[INIT] MediaRecorder supports ${supported}`);
+
+// Force a clean recorder MIME (avoid ";codecs=opus" confusion downstream)
+const REC_MIME = (window.MediaRecorder?.isTypeSupported?.('audio/webm'))
+  ? 'audio/webm'
+  : supported;
 
 /* =============================================================================
    SECTION 2 — UTILS (Audio priming, dataURL helper, transcript merge)
@@ -170,7 +175,7 @@ holdBtn.onmouseleave = ()=>{ if(holdRecorder && holdRecorder.state==='recording'
 async function holdStart(){
   statusEl.textContent='Recording… (hold)';
   const stream = await getMic();
-  try{ holdRecorder = new MediaRecorder(stream,{ mimeType:supported }); } catch { holdRecorder = new MediaRecorder(stream); }
+  try{ holdRecorder = new MediaRecorder(stream,{ mimeType: REC_MIME }); } catch { holdRecorder = new MediaRecorder(stream); }
   holdChunks=[];
   holdRecorder.ondataavailable = ev=>{ if(ev.data && ev.data.size) { holdChunks.push(ev.data); log(`[HOLD] chunk ${ev.data.size} bytes`);} };
   holdRecorder.onstop = async ()=>{
@@ -188,7 +193,7 @@ async function holdStart(){
     }catch(e){ output.textContent='Error'; statusEl.textContent='Ready'; log(`[HOLD] ${String(e)}`); }
   };
   holdRecorder.start(); // single-shot. stop() flushes a complete file
-  log(`[HOLD] start (${supported})`);
+  log(`[HOLD] start (${REC_MIME})`);
 }
 function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.stop(); }catch{} }
 
@@ -224,7 +229,7 @@ async function toggleRealtime(){
 async function startRealtime(){
   await primeAudio(); // unlock autoplay
   rtStream = await getMic();
-  try{ rtRecorder = new MediaRecorder(rtStream,{ mimeType:supported }); } catch { rtRecorder = new MediaRecorder(rtStream); }
+  try{ rtRecorder = new MediaRecorder(rtStream,{ mimeType: REC_MIME }); } catch { rtRecorder = new MediaRecorder(rtStream); }
 
   // reset state for a new session
   rtQueue=[]; rtLiveText=''; lastChunkAt=0;
@@ -238,7 +243,7 @@ async function startRealtime(){
     }
   };
   rtRecorder.start(CHUNK_MS);
-  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${supported})`);
+  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${REC_MIME})`);
 
   // timers
   rtSendTimer    = setInterval(sendPendingChunks, SEND_TICK_MS);
@@ -304,7 +309,7 @@ selfTestBtn.onclick = async ()=>{
     log(`[SELFTEST] chat OK: ${hello}`);
 
     const stream = await getMic();
-    let rec; try{ rec = new MediaRecorder(stream,{ mimeType:supported }); }catch{ rec = new MediaRecorder(stream); }
+    let rec; try{ rec = new MediaRecorder(stream,{ mimeType: REC_MIME }); }catch{ rec = new MediaRecorder(stream); }
     const chunks=[];
     rec.ondataavailable = e=>{ if(e.data && e.data.size){ chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size}B`);} };
     rec.start(); log('[SELFTEST] recording ~3s…');
