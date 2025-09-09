@@ -64,8 +64,14 @@
 
       function log(s){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${s}`; diag.scrollTop = diag.scrollHeight; }
 
-      // MIME detect
-      const CANDIDATE_MIMES = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4;codecs=mp4a','audio/mpeg'];
+      // Detect a usable audio MIME for MediaRecorder
+      const CANDIDATE_MIMES = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/mp4;codecs=mp4a',
+        'audio/mpeg'
+      ];
       const supported = CANDIDATE_MIMES.find(t => {
         try { return window.MediaRecorder?.isTypeSupported?.(t); } catch { return false; }
       }) || 'audio/webm';
@@ -90,14 +96,14 @@
         }catch(e){ log(`[TTS] error: ${String(e)}`); }
       }
 
-      // ---------- Small helpers ----------
+      // ---------- Helpers ----------
       function mergeTranscript(oldText, newText){
         if (!oldText) return (newText||'').trim();
         if (!newText) return oldText;
         const a = oldText.trim(), b = newText.trim();
-        if (b.startsWith(a)) return b;        // extended prefix
-        if (a.endsWith(b)) return a;          // duplicate tail
-        if (b.endsWith(a)) return b;          // duplicate head
+        if (b.startsWith(a)) return b;
+        if (a.endsWith(b)) return a;
+        if (b.endsWith(a)) return b;
         return (a + (a.endsWith(' ')?' ':' ') + b).trim();
       }
 
@@ -157,7 +163,7 @@
         log(`[HOLD] Recorder MIME: ${supported}`);
       }
       async function onStopped(){
-        const blob = audioChunks.length ? audioChunks[audioChunks.length-1] : null; // use last full blob
+        const blob = audioChunks.length ? audioChunks[audioChunks.length-1] : null; // last full blob
         const size = blob ? blob.size : 0;
         log(`[HOLD] final blob ${size} bytes from ${audioChunks.length} chunks`);
         if(!blob || !size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
@@ -177,7 +183,7 @@
           output.textContent = 'You said: ' + text + '\nThinking…';
 
           const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
-          const cct=cr.headers.get('content-type')||''; const cdata = cct.includes('application/json')? await cr.json() : { error: await cr.text() };
+          const cct=cr.headers.get('content-type')||''; const cdata = cct.includes('application/json')? await r.json() : { error: await cr.text() };
           if (!cr.ok || cdata.error){ log(`[HOLD] chat server error: ${cdata.error||cr.statusText}`); output.textContent='Chat error.'; return; }
           const reply = cdata.reply || '(no reply)';
           output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
@@ -197,25 +203,28 @@
       pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent='Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-      // ---------------- CHAT realtime (single-chunk uploads + multi-turn) ----------------
+      // ---------------- CHAT realtime (single-chunk uploads + smarter ACK) ----------------
       let rtStream=null, rtRecorder=null, rtInterval=null, rtSilenceTimer=null;
-      let rtChunks=[], rtBufferText='', lastHeardAt=0, ackSpoken=false;
-      const CHUNK_MS   = 700;   // recorder emits a chunk every ~700ms
-      const SEND_MS    = 800;   // check/send every 800ms
-      const SILENCE_MS = 1800;  // send to chat after ~1.8s silence
-      const MAX_PER_TICK = 2;   // process at most 2 chunks per tick
+      let rtChunks=[], rtBufferText='', lastHeardAt=0, ackSpoken=false, bytesThisTurn=0;
+
+      const CHUNK_MS       = 1500; // larger chunks -> valid files
+      const SEND_MS        = 900;  // check/send rhythm
+      const SILENCE_MS     = 1800; // inactivity -> send to chat
+      const MAX_PER_TICK   = 2;    // avoid backlog
+      const MIN_CHUNK_BYTES= 5000; // ignore tiny blobs that break whisper
+      const ACK_MIN_BYTES  = 12000;
+      const ACK_MIN_CHARS  = 6;
 
       async function startRealtime(){
         if(rtRecorder) return;
         statusEl.textContent='CHAT mode: listening…';
-        rtBufferText=''; rtChunks=[]; ackSpoken=false; lastHeardAt=0;
+        rtBufferText=''; rtChunks=[]; ackSpoken=false; lastHeardAt=0; bytesThisTurn=0;
 
         try { await primeAudio(); } catch {}
         try{
           rtStream = await requestMic();
           try{ rtRecorder=new MediaRecorder(rtStream,{ mimeType: supported }); }catch{ rtRecorder=new MediaRecorder(rtStream); }
           rtRecorder.ondataavailable = e => { if(e.data && e.data.size) { rtChunks.push(e.data); log(`[CHAT] chunk ${e.data.size} bytes (queue=${rtChunks.length})`);} };
-          // IMPORTANT: start with timeslice so ondataavailable fires continuously
           rtRecorder.start(CHUNK_MS);
           log(`[CHAT] recorder started with timeslice ${CHUNK_MS}ms (${supported})`);
 
@@ -240,7 +249,6 @@
       }
 
       async function sendBatch(){
-        // Nudge recorder to flush if nothing arrived
         try { if (rtRecorder && rtRecorder.state==='recording' && rtChunks.length===0 && rtRecorder.requestData) rtRecorder.requestData(); } catch {}
 
         if(!rtChunks.length) return;
@@ -250,7 +258,13 @@
           const single = rtChunks.shift();
           if (!single || !single.size) continue;
 
-          log(`[CHAT] uploading chunk ${single.size} bytes`);
+          if (single.size < MIN_CHUNK_BYTES) {
+            log(`[CHAT] skipped tiny chunk (${single.size} bytes)`);
+            continue;
+          }
+
+          bytesThisTurn += single.size;
+          log(`[CHAT] uploading chunk ${single.size} bytes (turnBytes=${bytesThisTurn})`);
           const dataUrl = await blobToDataUrl(single);
 
           try{
@@ -259,9 +273,13 @@
             const body = ct.includes('application/json') ? await tr.json() : { error: await tr.text() };
 
             if (!tr.ok || body.error) { log(`[CHAT] transcribe server error: ${body.error || tr.statusText}`); continue; }
+
             const text = (body.text || '').trim();
             if (text) {
-              if (!ackSpoken) { ackSpoken = true; speak('One moment please'); }
+              if (!ackSpoken && (text.length >= ACK_MIN_CHARS || bytesThisTurn >= ACK_MIN_BYTES)) {
+                ackSpoken = true;
+                speak('One moment please');
+              }
               rtBufferText = mergeTranscript(rtBufferText, text);
               lastHeardAt = Date.now();
               output.textContent = `You (live): ${rtBufferText}`;
@@ -278,7 +296,9 @@
         if (idle < SILENCE_MS) return;
 
         const toSend = rtBufferText;
-        rtBufferText = '';                    // clear for next turn
+        rtBufferText = '';
+        bytesThisTurn = 0;     // reset for next turn
+
         try{
           output.textContent = `You: ${toSend}\nThinking…`;
           const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: toSend }) });
@@ -288,8 +308,11 @@
 
           const reply = data.reply || '(no reply)';
           output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
-          ackSpoken = false;                  // allow next-turn ack
-          lastHeardAt = 0;                    // reset utterance timer
+
+          // prepare for next utterance immediately
+          ackSpoken = false;
+          lastHeardAt = 0;
+
           await speak(reply);
         }catch(e){ log(`[CHAT] chat network error: ${String(e)}`); }
       }
@@ -318,8 +341,7 @@
           const chunks=[];
           rec.ondataavailable = e=>{ if(e.data && e.data.size) { chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size} bytes`);} };
 
-          // record ~3s WITHOUT timeslice so we get one proper file at stop
-          rec.start();
+          rec.start();                    // record without timeslice
           log('[SELFTEST] recording ~3s… please say: "testing testing one two"');
           await new Promise(res=>setTimeout(res,3000));
           try { rec.requestData && rec.requestData(); } catch {}
