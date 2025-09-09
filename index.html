@@ -64,7 +64,7 @@
 
       function log(s){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${s}`; diag.scrollTop = diag.scrollHeight; }
 
-      // Detect a usable audio MIME for MediaRecorder
+      // Pick a MediaRecorder MIME that works on the device
       const CANDIDATE_MIMES = [
         'audio/webm;codecs=opus',
         'audio/webm',
@@ -143,8 +143,7 @@
           if (!r.ok || data.error){ output.textContent=`Chat error: ${data.error||r.statusText}`; log(`[CHAT] server error: ${data.error||r.statusText}`); return; }
           const reply=data.reply || '(no reply)';
           output.textContent=reply;
-          await speak('One moment please');
-          await speak(reply);
+          await speak(reply); // no realtime ack for typed chat either
         }catch(e){ output.textContent='Network error'; log(`[CHAT] network error: ${String(e)}`); }
       }
       sendBtn.onclick=()=>{ const msg=textInput.value.trim(); if(!msg) return; textInput.value=''; sendMessage(msg); };
@@ -183,12 +182,12 @@
           output.textContent = 'You said: ' + text + '\nThinking…';
 
           const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
-          const cct=cr.headers.get('content-type')||''; const cdata = cct.includes('application/json')? await r.json() : { error: await cr.text() };
+          const cct=cr.headers.get('content-type')||'';
+          const cdata = cct.includes('application/json') ? await cr.json() : { error: await cr.text() };
           if (!cr.ok || cdata.error){ log(`[HOLD] chat server error: ${cdata.error||cr.statusText}`); output.textContent='Chat error.'; return; }
           const reply = cdata.reply || '(no reply)';
           output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
           statusEl.textContent = 'Ready';
-          await speak('One moment please');
           await speak(reply);
         }catch(e){
           statusEl.textContent='Error';
@@ -203,28 +202,33 @@
       pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent='Recording… (hold)'; await startRecording(); };
       pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
 
-      // ---------------- CHAT realtime (single-chunk uploads + smarter ACK) ----------------
+      // ---------------- CHAT realtime (single-chunk uploads, better silence/acks) ----------------
       let rtStream=null, rtRecorder=null, rtInterval=null, rtSilenceTimer=null;
-      let rtChunks=[], rtBufferText='', lastHeardAt=0, ackSpoken=false, bytesThisTurn=0;
+      let rtChunks=[], rtBufferText='', lastInputAt=0;
 
-      const CHUNK_MS       = 1500; // larger chunks -> valid files
-      const SEND_MS        = 900;  // check/send rhythm
-      const SILENCE_MS     = 1800; // inactivity -> send to chat
-      const MAX_PER_TICK   = 2;    // avoid backlog
-      const MIN_CHUNK_BYTES= 5000; // ignore tiny blobs that break whisper
-      const ACK_MIN_BYTES  = 12000;
-      const ACK_MIN_CHARS  = 6;
+      const CHUNK_MS       = 1000; // ~1s chunks → valid files, frequent updates
+      const SEND_MS        = 600;  // send rhythm
+      const SILENCE_MS     = 2200; // consider done after ~2.2s with no input chunks
+      const MAX_PER_TICK   = 3;
+      const MIN_CHUNK_BYTES= 800;  // accept 1–3 KB Android chunks; still ignore 0/55/168 byte blobs
 
       async function startRealtime(){
         if(rtRecorder) return;
         statusEl.textContent='CHAT mode: listening…';
-        rtBufferText=''; rtChunks=[]; ackSpoken=false; lastHeardAt=0; bytesThisTurn=0;
+        rtBufferText=''; rtChunks=[]; lastInputAt=0;
 
         try { await primeAudio(); } catch {}
         try{
           rtStream = await requestMic();
           try{ rtRecorder=new MediaRecorder(rtStream,{ mimeType: supported }); }catch{ rtRecorder=new MediaRecorder(rtStream); }
-          rtRecorder.ondataavailable = e => { if(e.data && e.data.size) { rtChunks.push(e.data); log(`[CHAT] chunk ${e.data.size} bytes (queue=${rtChunks.length})`);} };
+          rtRecorder.ondataavailable = e => {
+            if(e.data && e.data.size){
+              rtChunks.push(e.data);
+              // Any meaningful chunk arrival = still speaking
+              if (e.data.size >= MIN_CHUNK_BYTES) lastInputAt = Date.now();
+              log(`[CHAT] chunk ${e.data.size} bytes (queue=${rtChunks.length})`);
+            }
+          };
           rtRecorder.start(CHUNK_MS);
           log(`[CHAT] recorder started with timeslice ${CHUNK_MS}ms (${supported})`);
 
@@ -250,7 +254,6 @@
 
       async function sendBatch(){
         try { if (rtRecorder && rtRecorder.state==='recording' && rtChunks.length===0 && rtRecorder.requestData) rtRecorder.requestData(); } catch {}
-
         if(!rtChunks.length) return;
 
         const take = Math.min(rtChunks.length, MAX_PER_TICK);
@@ -263,8 +266,8 @@
             continue;
           }
 
-          bytesThisTurn += single.size;
-          log(`[CHAT] uploading chunk ${single.size} bytes (turnBytes=${bytesThisTurn})`);
+          // we already updated lastInputAt on arrival; now transcribe
+          log(`[CHAT] uploading chunk ${single.size} bytes`);
           const dataUrl = await blobToDataUrl(single);
 
           try{
@@ -276,13 +279,9 @@
 
             const text = (body.text || '').trim();
             if (text) {
-              if (!ackSpoken && (text.length >= ACK_MIN_CHARS || bytesThisTurn >= ACK_MIN_BYTES)) {
-                ackSpoken = true;
-                speak('One moment please');
-              }
               rtBufferText = mergeTranscript(rtBufferText, text);
-              lastHeardAt = Date.now();
               output.textContent = `You (live): ${rtBufferText}`;
+              // lastInputAt already refreshed by chunk arrival
             }
           }catch(e){
             log(`[CHAT] transcribe network error: ${String(e)}`);
@@ -291,13 +290,13 @@
       }
 
       async function checkSilenceAndSend(){
+        // Only considered silent if we haven't received any acceptable chunk for SILENCE_MS
         if (!rtBufferText) return;
-        const idle = Date.now() - lastHeardAt;
-        if (idle < SILENCE_MS) return;
+        if (Date.now() - lastInputAt < SILENCE_MS) return;
 
         const toSend = rtBufferText;
         rtBufferText = '';
-        bytesThisTurn = 0;     // reset for next turn
+        lastInputAt = 0; // reset for next turn
 
         try{
           output.textContent = `You: ${toSend}\nThinking…`;
@@ -308,12 +307,8 @@
 
           const reply = data.reply || '(no reply)';
           output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
-
-          // prepare for next utterance immediately
-          ackSpoken = false;
-          lastHeardAt = 0;
-
-          await speak(reply);
+          await speak(reply);   // no realtime “One moment…” ack
+          // Immediately ready for next utterance
         }catch(e){ log(`[CHAT] chat network error: ${String(e)}`); }
       }
 
