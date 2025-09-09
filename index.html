@@ -1,371 +1,331 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <title>PhoenixVA — Voice + Text Portal (Mobile-friendly)</title>
-    <style>
-      body { font-family: system-ui, Arial, sans-serif; margin: 40px; }
-      h1 { margin-top: 0; }
-      #row { margin: 8px 0; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-      input[type="text"] { width: 360px; max-width: 100%; padding: 8px; font-size: 16px; }
-      button { padding: 10px 16px; font-size: 16px; margin-right: 6px; }
-      #output { margin-top: 16px; padding: 12px; border: 1px solid #ddd; min-height: 90px; white-space: pre-wrap; }
-      #status { color:#555; }
-      #diag { margin-top: 8px; font-size: 12px; color:#444; white-space: pre-wrap; max-height: 260px; overflow:auto; background:#fafafa; border:1px solid #eee; padding:8px; }
-      .rt-container{ display:flex; align-items:center; gap:12px; padding:8px 12px; border:2px solid black; border-radius:16px; background:black; }
-      .rt-label{ font-weight:700; font-size:18px; color:#b3132c; letter-spacing:.3px; }
-      .rt-toggle{ position:relative; width:76px; height:40px; border-radius:999px; background:#222; border:2px solid #b3132c; cursor:pointer; display:inline-flex; align-items:center; padding:2px; transition:background .2s ease; }
-      .rt-toggle[aria-checked="true"]{ background:#330000; }
-      .rt-thumb{ width:34px; height:34px; border-radius:999px; background:#b3132c; transform: translateX(0); transition: transform .2s ease; }
-      .rt-toggle[aria-checked="true"] .rt-thumb{ transform: translateX(36px); }
-      .rt-badge{ font-size:12px; padding:4px 8px; border-radius:999px; background:black; color:#b3132c; border:1px solid #b3132c; }
-      .rt-badge.off{ background:#111; color:#666; border-color:#333; }
-      .rt-note{ font-size:12px; color:#b3132c; margin-left:4px; }
-      .pill { font-size:12px; padding:4px 8px; border-radius:999px; background:#efefef; border:1px solid #ddd; cursor:pointer; }
-    </style>
-  </head>
-  <body>
-    <h1>PhoenixVA — Voice + Text Portal</h1>
+<head>
+  <meta charset="utf-8" />
+  <title>PhoenixVA — Voice + Text Portal</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --scarlet:#b3132c; }
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 12px; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin: 8px 0; }
+    input[type="text"] { flex: 1 1 340px; max-width: 100%; padding: 10px; font-size: 16px; border:1px solid #ddd; border-radius:8px; }
+    button { padding: 10px 14px; font-size: 15px; border-radius:10px; cursor:pointer; }
+    #output { margin-top: 12px; padding: 12px; border: 1px solid #ddd; min-height: 100px; white-space: pre-wrap; border-radius:8px; }
+    #diag { margin-top: 10px; padding:8px; border:1px solid #eee; background:#fafafa; white-space:pre-wrap; max-height: 260px; overflow:auto; border-radius:8px; font-size:12px; }
+    #status { color:#666; }
+    /* CHAT toggle */
+    .toggle-wrap { display:flex; align-items:center; gap:10px; padding:8px 12px; border:2px solid #000; border-radius:16px; background:#000; }
+    .toggle-label { color: var(--scarlet); font-weight:700; }
+    .toggle { position:relative; width:76px; height:40px; border-radius:999px; background:#222; border:2px solid var(--scarlet); cursor:pointer; padding:2px; }
+    .thumb { width:34px; height:34px; background:var(--scarlet); border-radius:999px; transform:translateX(0); transition:transform .2s; }
+    .toggle[aria-checked="true"] .thumb { transform:translateX(36px); }
+    .badge { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--scarlet); color:var(--scarlet); background:#000; }
+    .badge.off { border-color:#333; color:#666; }
+    .pill { font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid #ddd; background:#f3f3f3; }
+  </style>
+</head>
+<body>
+  <h1>PhoenixVA — Voice + Text Portal</h1>
 
-    <div id="row">
-      <button id="pressBtn">🎙️ Hold to Talk</button>
+  <div class="row">
+    <button id="holdBtn">🎙️ Hold to Talk</button>
 
-      <div class="rt-container" role="group" aria-label="CHAT toggle">
-        <span class="rt-label">CHAT</span>
-        <div id="rtToggle" class="rt-toggle" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle CHAT mode">
-          <div class="rt-thumb"></div>
-        </div>
-        <span id="rtBadge" class="rt-badge off">OFF</span>
-        <span class="rt-note">Realtime voice when ON</span>
-      </div>
-
-      <button id="selfTestBtn" class="pill" title="End-to-end probe">Run Self-Test</button>
-      <span id="status"></span>
+    <div class="toggle-wrap" role="group" aria-label="Realtime chat toggle">
+      <span class="toggle-label">CHAT</span>
+      <div id="chatToggle" class="toggle" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle realtime chat"><div class="thumb"></div></div>
+      <span id="chatBadge" class="badge off">OFF</span>
+      <span style="color:var(--scarlet); font-size:12px;">Realtime voice when ON</span>
     </div>
 
-    <div id="row">
-      <input id="textInput" type="text" placeholder="Type your message…" />
-      <button id="sendBtn">Send</button>
-    </div>
+    <button id="selfTestBtn" class="pill" title="End-to-end probe">Run Self-Test</button>
+    <span id="status"></span>
+  </div>
 
-    <div id="output">Ready.</div>
-    <div id="diag">[START] Page loaded.</div>
+  <div class="row">
+    <input id="textInput" type="text" placeholder="Type your message…" />
+    <button id="sendBtn">Send</button>
+  </div>
 
-    <script>
-      const pressBtn  = document.getElementById('pressBtn');
-      const sendBtn   = document.getElementById('sendBtn');
-      const textInput = document.getElementById('textInput');
-      const output    = document.getElementById('output');
-      const statusEl  = document.getElementById('status');
-      const diag      = document.getElementById('diag');
-      const rtToggle  = document.getElementById('rtToggle');
-      const rtBadge   = document.getElementById('rtBadge');
-      const selfTestBtn = document.getElementById('selfTestBtn');
+  <div id="output">Ready.</div>
+  <div id="diag">[START] Page loaded.</div>
 
-      function log(s){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${s}`; diag.scrollTop = diag.scrollHeight; }
+<script>
+/* =============================================================================
+   SECTION 0 — LIGHTWEIGHT LOGGER
+============================================================================= */
+const diag = document.getElementById('diag');
+function log(msg){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`; diag.scrollTop = diag.scrollHeight; }
 
-      // Pick a MediaRecorder MIME that works on the device
-      const CANDIDATE_MIMES = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/ogg;codecs=opus',
-        'audio/mp4;codecs=mp4a',
-        'audio/mpeg'
-      ];
-      const supported = CANDIDATE_MIMES.find(t => {
-        try { return window.MediaRecorder?.isTypeSupported?.(t); } catch { return false; }
-      }) || 'audio/webm';
+/* =============================================================================
+   SECTION 1 — UI ELEMENTS & CONSTANTS
+   (All wiring to buttons / toggle lives here)
+============================================================================= */
+const holdBtn    = document.getElementById('holdBtn');
+const chatToggle = document.getElementById('chatToggle');
+const chatBadge  = document.getElementById('chatBadge');
+const selfTestBtn= document.getElementById('selfTestBtn');
+const sendBtn    = document.getElementById('sendBtn');
+const textInput  = document.getElementById('textInput');
+const statusEl   = document.getElementById('status');
+const output     = document.getElementById('output');
 
-      function blobToDataUrl(blob){
-        return new Promise((resolve,reject)=>{
-          const fr=new FileReader();
-          fr.onload=()=>resolve(fr.result);
-          fr.onerror=reject;
-          fr.readAsDataURL(blob);
-        });
+// Pick a MediaRecorder MIME that actually works on device
+const CANDIDATE_MIMES = [
+  'audio/webm;codecs=opus', 'audio/webm',
+  'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a',
+  'audio/mpeg'
+];
+const supported = CANDIDATE_MIMES.find(t => {
+  try { return window.MediaRecorder?.isTypeSupported?.(t); } catch { return false; }
+}) || 'audio/webm';
+log(`[INIT] MediaRecorder uses ${supported}`);
+
+/* =============================================================================
+   SECTION 2 — UTILS (Audio priming, dataURL helper, transcript merge)
+============================================================================= */
+function blobToDataUrl(blob){
+  return new Promise((resolve,reject)=>{
+    const fr=new FileReader();
+    fr.onload=()=>resolve(fr.result);
+    fr.onerror=reject;
+    fr.readAsDataURL(blob);
+  });
+}
+function mergeTranscript(a,b){
+  if(!a) return (b||'').trim();
+  if(!b) return a;
+  const x=a.trim(), y=b.trim();
+  if(y.startsWith(x)) return y;
+  if(x.endsWith(y)) return x;
+  if(y.endsWith(x)) return y;
+  return (x + (x.endsWith(' ')?' ':' ') + y).trim();
+}
+async function primeAudio(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const src = ctx.createBufferSource(); src.buffer = ctx.createBuffer(1,1,22050);
+    src.connect(ctx.destination); src.start(0);
+    await new Promise(r=>setTimeout(r,30)); ctx.close();
+    log('[PRIME] Audio unlocked');
+  }catch(e){ log(`[PRIME] error: ${String(e)}`); }
+}
+async function getMic(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }
+    });
+    log('[MIC] permission granted');
+    return stream;
+  }catch(e){ log(`[MIC] denied: ${e?.name||'Error'} ${e?.message||''}`); throw e; }
+}
+
+/* =============================================================================
+   SECTION 3 — SERVER CALLS (chat, transcribe, speak)
+============================================================================= */
+async function callChat(message){
+  const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message }) });
+  const ct=r.headers.get('content-type')||''; const j = ct.includes('application/json')? await r.json() : { error: await r.text() };
+  if(!r.ok || j.error) throw new Error(j.error || r.statusText);
+  return j.reply || '';
+}
+async function callTranscribe(dataUrl){
+  const r = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
+  const ct=r.headers.get('content-type')||''; const j = ct.includes('application/json')? await r.json() : { error: await r.text() };
+  if(!r.ok || j.error) throw new Error(j.error || r.statusText);
+  return (j.text||'').trim();
+}
+async function callSpeak(text){
+  const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, voice:'alloy' }) });
+  if(!r.ok){ log(`[TTS] HTTP ${r.status} ${r.statusText}`); return; }
+  const url = URL.createObjectURL(new Blob([await r.arrayBuffer()],{type:'audio/mpeg'}));
+  const a = new Audio(url); a.play().catch(err=>log(`[TTS] play blocked: ${String(err)}`));
+}
+
+/* =============================================================================
+   SECTION 4 — TYPE TO CHAT (baseline)
+============================================================================= */
+sendBtn.onclick = async ()=>{
+  const msg=textInput.value.trim(); if(!msg) return;
+  textInput.value='';
+  output.textContent='Thinking…';
+  try{
+    const reply=await callChat(msg);
+    output.textContent=reply;
+    await callSpeak(reply);
+  }catch(e){ output.textContent='Chat error'; log(`[CHAT] ${String(e)}`); }
+};
+textInput.addEventListener('keydown',e=>{ if(e.key==='Enter') sendBtn.click(); });
+
+/* =============================================================================
+   SECTION 5 — HOLD-TO-TALK (single shot): press, speak, release
+============================================================================= */
+let holdRecorder, holdChunks=[];
+holdBtn.onmousedown = holdStart;
+holdBtn.ontouchstart = e=>{e.preventDefault(); holdStart();};
+holdBtn.onmouseup    = holdStop;
+holdBtn.ontouchend   = e=>{e.preventDefault(); holdStop();};
+holdBtn.onmouseleave = ()=>{ if(holdRecorder && holdRecorder.state==='recording') holdStop(); };
+
+async function holdStart(){
+  statusEl.textContent='Recording… (hold)';
+  const stream = await getMic();
+  try{ holdRecorder = new MediaRecorder(stream,{ mimeType:supported }); } catch { holdRecorder = new MediaRecorder(stream); }
+  holdChunks=[];
+  holdRecorder.ondataavailable = ev=>{ if(ev.data && ev.data.size) { holdChunks.push(ev.data); log(`[HOLD] chunk ${ev.data.size} bytes`);} };
+  holdRecorder.onstop = async ()=>{
+    const blob = holdChunks[holdChunks.length-1]; // use last complete chunk
+    if(!blob || !blob.size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
+    statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
+    try{
+      const text = await callTranscribe(await blobToDataUrl(blob));
+      if(!text){ output.textContent='No speech detected.'; statusEl.textContent='Ready'; return; }
+      output.textContent='You said: ' + text + '\nThinking…';
+      const reply = await callChat(text);
+      output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
+      statusEl.textContent='Ready';
+      await callSpeak(reply);
+    }catch(e){ output.textContent='Error'; statusEl.textContent='Ready'; log(`[HOLD] ${String(e)}`); }
+  };
+  holdRecorder.start(); // single-shot. stop() flushes a complete file
+  log(`[HOLD] start (${supported})`);
+}
+function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.stop(); }catch{} }
+
+/* =============================================================================
+   SECTION 6 — REALTIME CHAT (keeps listening, multi-turn)
+   Key points:
+   - Never concatenate MediaRecorder chunks.
+   - Ignore tiny blobs (< 800 B) that aren’t valid audio files.
+   - Use *chunk arrival* as “still speaking” signal; finalize after SILENCE_MS with no arrivals.
+============================================================================= */
+const CHUNK_MS        = 900;   // recorder emits ~1s chunks
+const SEND_TICK_MS    = 500;   // how often we try to send pending chunks
+const SILENCE_MS      = 2200;  // finalize if no meaningful chunk for this long
+const MIN_CHUNK_BYTES = 800;   // accept small Android chunks; ignore 0/55/168 B
+
+let rtStream=null, rtRecorder=null;
+let rtQueue=[], rtLiveText='', rtSendTimer=null, rtSilenceTimer=null, lastChunkAt=0;
+
+function setChatToggle(on){
+  chatToggle.setAttribute('aria-checked', on?'true':'false');
+  chatBadge.textContent = on ? 'ON' : 'OFF';
+  chatBadge.classList.toggle('off', !on);
+}
+chatToggle.addEventListener('click', ()=> toggleRealtime());
+chatToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
+
+async function toggleRealtime(){
+  const on = chatToggle.getAttribute('aria-checked')==='true';
+  if(on){ await stopRealtime(); setChatToggle(false); statusEl.textContent='CHAT OFF. Press-and-hold active.'; return; }
+  await startRealtime(); setChatToggle(true); statusEl.textContent='CHAT mode: listening…';
+}
+
+async function startRealtime(){
+  await primeAudio(); // unlock autoplay
+  rtStream = await getMic();
+  try{ rtRecorder = new MediaRecorder(rtStream,{ mimeType:supported }); } catch { rtRecorder = new MediaRecorder(rtStream); }
+
+  // reset state for a new session
+  rtQueue=[]; rtLiveText=''; lastChunkAt=0;
+
+  // Each chunk is its own WebM; DO NOT concatenate.
+  rtRecorder.ondataavailable = (ev)=>{
+    if(ev.data && ev.data.size){
+      rtQueue.push(ev.data);
+      if(ev.data.size >= MIN_CHUNK_BYTES) lastChunkAt = Date.now(); // any meaningful chunk = user still speaking
+      log(`[CHAT] chunk ${ev.data.size} bytes (queue=${rtQueue.length})`);
+    }
+  };
+  rtRecorder.start(CHUNK_MS);
+  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${supported})`);
+
+  // timers
+  rtSendTimer    = setInterval(sendPendingChunks, SEND_TICK_MS);
+  rtSilenceTimer = setInterval(checkFinalizeTurn, 250);
+}
+
+async function stopRealtime(){
+  try{ if(rtSendTimer) clearInterval(rtSendTimer); }catch{}
+  try{ if(rtSilenceTimer) clearInterval(rtSilenceTimer); }catch{}
+  rtSendTimer=null; rtSilenceTimer=null;
+
+  try{ if(rtRecorder && rtRecorder.state!=='inactive') rtRecorder.stop(); }catch{}
+  rtRecorder=null;
+
+  try{ if(rtStream) rtStream.getTracks().forEach(t=>t.stop()); }catch{}
+  rtStream=null;
+}
+
+async function sendPendingChunks(){
+  if(!rtQueue.length) return;
+  // gently drain the queue; never fuse files together
+  const take = Math.min(rtQueue.length, 3);
+  for(let i=0;i<take;i++){
+    const blob = rtQueue.shift();
+    if(!blob || !blob.size) continue;
+    if(blob.size < MIN_CHUNK_BYTES){ log(`[CHAT] skip tiny ${blob.size}B`); continue; }
+
+    try{
+      const text = await callTranscribe(await blobToDataUrl(blob));
+      if(text){
+        rtLiveText = mergeTranscript(rtLiveText, text);
+        output.textContent = `You (live): ${rtLiveText}`;
       }
+    }catch(e){ log(`[CHAT] transcribe error: ${String(e)}`); }
+  }
+}
 
-      async function speak(text){
-        try{
-          const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ text, voice:'alloy' }) });
-          const ct = r.headers.get('content-type')||'';
-          if(!r.ok){ log(`[TTS] HTTP ${r.status} ${r.statusText}: ${ct}`); return; }
-          const buf = await r.arrayBuffer();
-          const url = URL.createObjectURL(new Blob([buf],{type:'audio/mpeg'}));
-          const a = new Audio(url); a.play().catch(err=>log(`[TTS] play blocked: ${String(err)}`));
-        }catch(e){ log(`[TTS] error: ${String(e)}`); }
-      }
+async function checkFinalizeTurn(){
+  if(!rtLiveText) return;                   // nothing to send yet
+  if(Date.now() - lastChunkAt < SILENCE_MS) return; // still speaking
 
-      // ---------- Helpers ----------
-      function mergeTranscript(oldText, newText){
-        if (!oldText) return (newText||'').trim();
-        if (!newText) return oldText;
-        const a = oldText.trim(), b = newText.trim();
-        if (b.startsWith(a)) return b;
-        if (a.endsWith(b)) return a;
-        if (b.endsWith(a)) return b;
-        return (a + (a.endsWith(' ')?' ':' ') + b).trim();
-      }
+  const toSend = rtLiveText;
+  rtLiveText = '';                          // clear for next turn
+  output.textContent = `You: ${toSend}\nThinking…`;
 
-      async function primeAudio() {
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const src = ctx.createBufferSource();
-          src.buffer = ctx.createBuffer(1, 1, 22050);
-          src.connect(ctx.destination);
-          src.start(0);
-          await new Promise(r => setTimeout(r, 30));
-          ctx.close();
-          log('[PRIME] audio unlocked');
-        } catch (e) { log(`[PRIME] audio unlock error: ${String(e)}`); }
-      }
+  try{
+    const reply = await callChat(toSend);
+    output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
+    await callSpeak(reply);
+    // Do NOT stop recorder; keep listening for next sentence
+    lastChunkAt = 0; // ensure new turn starts cleanly
+  }catch(e){ log(`[CHAT] chat error: ${String(e)}`); output.textContent='Chat error.'; }
+}
 
-      async function requestMic() {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }
-          });
-          log('[MIC] permission granted');
-          return stream;
-        } catch (err) {
-          log(`[MIC] denied: ${err?.name||'Error'} ${err?.message||''}`);
-          throw err;
-        }
-      }
+/* =============================================================================
+   SECTION 7 — SELF-TEST (optional): chat → record once → transcribe → reply
+   (Does NOT change app state; only used for diagnostics)
+============================================================================= */
+selfTestBtn.onclick = async ()=>{
+  log('[SELFTEST] start');
+  try{
+    const hello = await callChat('Say “hello” in five words.');
+    log(`[SELFTEST] chat OK: ${hello}`);
 
-      // ---------------- Text → Chat ----------------
-      async function sendMessage(msg){
-        output.textContent='Thinking…';
-        try{
-          const r=await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ message: msg }) });
-          const ct=r.headers.get('content-type')||'';
-          const data = ct.includes('application/json') ? await r.json() : { error: await r.text() };
-          if (!r.ok || data.error){ output.textContent=`Chat error: ${data.error||r.statusText}`; log(`[CHAT] server error: ${data.error||r.statusText}`); return; }
-          const reply=data.reply || '(no reply)';
-          output.textContent=reply;
-          await speak(reply); // no realtime ack for typed chat either
-        }catch(e){ output.textContent='Network error'; log(`[CHAT] network error: ${String(e)}`); }
-      }
-      sendBtn.onclick=()=>{ const msg=textInput.value.trim(); if(!msg) return; textInput.value=''; sendMessage(msg); };
-      textInput.addEventListener('keydown', e=>{ if(e.key==='Enter') sendBtn.click(); });
+    const stream = await getMic();
+    let rec; try{ rec = new MediaRecorder(stream,{ mimeType:supported }); }catch{ rec = new MediaRecorder(stream); }
+    const chunks=[];
+    rec.ondataavailable = e=>{ if(e.data && e.data.size){ chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size}B`);} };
+    rec.start(); log('[SELFTEST] recording ~3s…');
+    await new Promise(r=>setTimeout(r,3000));
+    try{ rec.requestData && rec.requestData(); }catch{}
+    rec.stop(); await new Promise(r=>rec.onstop=r);
+    stream.getTracks().forEach(t=>t.stop());
 
-      // ---------------- Hold-to-talk (single shot) ----------------
-      let mediaRecorder, audioChunks=[];
-      async function startRecording() {
-        if (!navigator.mediaDevices?.getUserMedia) { output.textContent='Mic not supported'; return; }
-        const stream = await requestMic();
-        try { mediaRecorder=new MediaRecorder(stream,{ mimeType: supported }); } catch { mediaRecorder=new MediaRecorder(stream); }
-        audioChunks=[];
-        mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) { audioChunks.push(e.data); log(`[HOLD] chunk ${e.data.size} bytes`);} };
-        mediaRecorder.onstop = onStopped;
-        mediaRecorder.start(); // single-shot, stop to flush
-        log(`[HOLD] Recorder MIME: ${supported}`);
-      }
-      async function onStopped(){
-        const blob = audioChunks.length ? audioChunks[audioChunks.length-1] : null; // last full blob
-        const size = blob ? blob.size : 0;
-        log(`[HOLD] final blob ${size} bytes from ${audioChunks.length} chunks`);
-        if(!blob || !size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
-        statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
+    const blob = chunks[chunks.length-1];
+    if(!blob || !blob.size){ log('[SELFTEST] no audio captured'); return; }
+    const heard = await callTranscribe(await blobToDataUrl(blob));
+    log(`[SELFTEST] heard: ${heard||'(empty)'}`);
 
-        try{
-          const dataUrl = await blobToDataUrl(blob);
-          const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
-          const ct = tr.headers.get('content-type') || '';
-          const tdata = ct.includes('application/json') ? await tr.json() : { error: await tr.text() };
-          if (!tr.ok || tdata.error) { output.textContent='Transcription error.'; log(`[HOLD] transcribe server error: ${tdata.error || tr.statusText}`); statusEl.textContent='Error'; return; }
-
-          const text = (tdata.text || '').trim();
-          if (!text) { statusEl.textContent='No speech'; output.textContent='No speech detected.'; return; }
-
-          statusEl.textContent = 'Asking…';
-          output.textContent = 'You said: ' + text + '\nThinking…';
-
-          const cr = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: text }) });
-          const cct=cr.headers.get('content-type')||'';
-          const cdata = cct.includes('application/json') ? await cr.json() : { error: await cr.text() };
-          if (!cr.ok || cdata.error){ log(`[HOLD] chat server error: ${cdata.error||cr.statusText}`); output.textContent='Chat error.'; return; }
-          const reply = cdata.reply || '(no reply)';
-          output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-          statusEl.textContent = 'Ready';
-          await speak(reply);
-        }catch(e){
-          statusEl.textContent='Error';
-          output.textContent='Error during transcription or chat.';
-          log(`[HOLD] transcribe network error: ${String(e)}`);
-        }
-      }
-      function stopRecording(){ if(mediaRecorder && mediaRecorder.state!=='inactive') mediaRecorder.stop(); }
-      pressBtn.onmousedown = async ()=>{ statusEl.textContent='Recording… (hold)'; await startRecording(); };
-      pressBtn.onmouseup   = ()=>{ statusEl.textContent='Processing…'; stopRecording(); };
-      pressBtn.onmouseleave= ()=>{ if(mediaRecorder && mediaRecorder.state==='recording'){ statusEl.textContent='Processing…'; stopRecording(); } };
-      pressBtn.ontouchstart= async (e)=>{ e.preventDefault(); statusEl.textContent='Recording… (hold)'; await startRecording(); };
-      pressBtn.ontouchend  = (e)=>{ e.preventDefault(); statusEl.textContent='Processing…'; stopRecording(); };
-
-      // ---------------- CHAT realtime (single-chunk uploads, better silence/acks) ----------------
-      let rtStream=null, rtRecorder=null, rtInterval=null, rtSilenceTimer=null;
-      let rtChunks=[], rtBufferText='', lastInputAt=0;
-
-      const CHUNK_MS       = 1000; // ~1s chunks → valid files, frequent updates
-      const SEND_MS        = 600;  // send rhythm
-      const SILENCE_MS     = 2200; // consider done after ~2.2s with no input chunks
-      const MAX_PER_TICK   = 3;
-      const MIN_CHUNK_BYTES= 800;  // accept 1–3 KB Android chunks; still ignore 0/55/168 byte blobs
-
-      async function startRealtime(){
-        if(rtRecorder) return;
-        statusEl.textContent='CHAT mode: listening…';
-        rtBufferText=''; rtChunks=[]; lastInputAt=0;
-
-        try { await primeAudio(); } catch {}
-        try{
-          rtStream = await requestMic();
-          try{ rtRecorder=new MediaRecorder(rtStream,{ mimeType: supported }); }catch{ rtRecorder=new MediaRecorder(rtStream); }
-          rtRecorder.ondataavailable = e => {
-            if(e.data && e.data.size){
-              rtChunks.push(e.data);
-              // Any meaningful chunk arrival = still speaking
-              if (e.data.size >= MIN_CHUNK_BYTES) lastInputAt = Date.now();
-              log(`[CHAT] chunk ${e.data.size} bytes (queue=${rtChunks.length})`);
-            }
-          };
-          rtRecorder.start(CHUNK_MS);
-          log(`[CHAT] recorder started with timeslice ${CHUNK_MS}ms (${supported})`);
-
-          rtInterval = setInterval(sendBatch, SEND_MS);
-          if (rtSilenceTimer) clearInterval(rtSilenceTimer);
-          rtSilenceTimer = setInterval(checkSilenceAndSend, 250);
-        }catch(err){
-          log(`[CHAT] start error: ${String(err)}`);
-          statusEl.textContent='CHAT error: mic unavailable';
-          stopRealtime();
-        }
-      }
-      async function stopRealtime(){
-        try{ if(rtInterval) clearInterval(rtInterval); }catch{}
-        try{ if(rtSilenceTimer) clearInterval(rtSilenceTimer); }catch{}
-        rtInterval=null; rtSilenceTimer=null;
-        try{ if(rtRecorder && rtRecorder.state!=='inactive') rtRecorder.stop(); }catch{}
-        rtRecorder=null;
-        try{ if(rtStream) rtStream.getTracks().forEach(t=>t.stop()); }catch{}
-        rtStream=null;
-        statusEl.textContent='CHAT OFF. Press-and-hold active.';
-      }
-
-      async function sendBatch(){
-        try { if (rtRecorder && rtRecorder.state==='recording' && rtChunks.length===0 && rtRecorder.requestData) rtRecorder.requestData(); } catch {}
-        if(!rtChunks.length) return;
-
-        const take = Math.min(rtChunks.length, MAX_PER_TICK);
-        for (let i=0;i<take;i++){
-          const single = rtChunks.shift();
-          if (!single || !single.size) continue;
-
-          if (single.size < MIN_CHUNK_BYTES) {
-            log(`[CHAT] skipped tiny chunk (${single.size} bytes)`);
-            continue;
-          }
-
-          // we already updated lastInputAt on arrival; now transcribe
-          log(`[CHAT] uploading chunk ${single.size} bytes`);
-          const dataUrl = await blobToDataUrl(single);
-
-          try{
-            const tr = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
-            const ct = tr.headers.get('content-type') || '';
-            const body = ct.includes('application/json') ? await tr.json() : { error: await tr.text() };
-
-            if (!tr.ok || body.error) { log(`[CHAT] transcribe server error: ${body.error || tr.statusText}`); continue; }
-
-            const text = (body.text || '').trim();
-            if (text) {
-              rtBufferText = mergeTranscript(rtBufferText, text);
-              output.textContent = `You (live): ${rtBufferText}`;
-              // lastInputAt already refreshed by chunk arrival
-            }
-          }catch(e){
-            log(`[CHAT] transcribe network error: ${String(e)}`);
-          }
-        }
-      }
-
-      async function checkSilenceAndSend(){
-        // Only considered silent if we haven't received any acceptable chunk for SILENCE_MS
-        if (!rtBufferText) return;
-        if (Date.now() - lastInputAt < SILENCE_MS) return;
-
-        const toSend = rtBufferText;
-        rtBufferText = '';
-        lastInputAt = 0; // reset for next turn
-
-        try{
-          output.textContent = `You: ${toSend}\nThinking…`;
-          const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: toSend }) });
-          const ct=r.headers.get('content-type')||'';
-          const data = ct.includes('application/json') ? await r.json() : { error: await r.text() };
-          if (!r.ok || data.error){ log(`[CHAT] chat server error: ${data.error||r.statusText}`); output.textContent='Chat error.'; return; }
-
-          const reply = data.reply || '(no reply)';
-          output.textContent = `You: ${toSend}\nAssistant: ${reply}`;
-          await speak(reply);   // no realtime “One moment…” ack
-          // Immediately ready for next utterance
-        }catch(e){ log(`[CHAT] chat network error: ${String(e)}`); }
-      }
-
-      function setRealtimeActive(on){
-        const active = !!on;
-        rtToggle.setAttribute('aria-checked', active ? 'true':'false');
-        rtBadge.textContent = active ? 'ON' : 'OFF';
-        rtBadge.classList.toggle('off', !active);
-        if (active) startRealtime(); else stopRealtime();
-      }
-      function toggleRealtime(){ const isOn = rtToggle.getAttribute('aria-checked')==='true'; setRealtimeActive(!isOn); }
-      rtToggle.addEventListener('click', toggleRealtime);
-      rtToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
-
-      // ---------------- One-click Self-Test (single complete file) ----------------
-      selfTestBtn.onclick = async () => {
-        log('[SELFTEST] starting…');
-        try{
-          const r1 = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message:'Say "hello" in five words.' })});
-          const t1 = r1.headers.get('content-type')||''; const j1 = t1.includes('application/json') ? await r1.json() : { error: await r1.text() };
-          log(`[SELFTEST] chat: ${r1.ok ? 'OK' : 'ERR'} ${j1.error ? j1.error : (j1.reply||'')}`);
-
-          const stream = await requestMic();
-          const rec = new MediaRecorder(stream, { mimeType: supported });
-          const chunks=[];
-          rec.ondataavailable = e=>{ if(e.data && e.data.size) { chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size} bytes`);} };
-
-          rec.start();                    // record without timeslice
-          log('[SELFTEST] recording ~3s… please say: "testing testing one two"');
-          await new Promise(res=>setTimeout(res,3000));
-          try { rec.requestData && rec.requestData(); } catch {}
-          rec.stop();
-          await new Promise(res=>rec.onstop=res);
-          stream.getTracks().forEach(t=>t.stop());
-
-          const blob = chunks.length ? chunks[chunks.length-1] : null; // last full chunk
-          if (!blob || !blob.size) { log('[SELFTEST] no audio captured'); return; }
-          log(`[SELFTEST] final blob ${blob.size} bytes`);
-
-          const dataUrl = await blobToDataUrl(blob);
-
-          const r2 = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
-          const t2 = r2.headers.get('content-type')||''; const j2 = t2.includes('application/json') ? await r2.json() : { error: await r2.text() };
-          log(`[SELFTEST] transcribe: ${r2.ok ? 'OK' : 'ERR'} ${j2.error ? j2.error : (j2.text||'')}`);
-
-          if (j2.text){
-            const r3 = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message: `You heard: ${j2.text}. Reply with a short acknowledgement.` }) });
-            const t3 = r3.headers.get('content-type')||''; const j3 = t3.includes('application/json') ? await r3.json() : { error: await r3.text() };
-            log(`[SELFTEST] chat(replay): ${r3.ok ? 'OK' : 'ERR'} ${j3.error ? j3.error : (j3.reply||'')}`);
-            if (j3.reply) await speak(j3.reply);
-          }
-          log('[SELFTEST] done.');
-        }catch(e){ log(`[SELFTEST] error: ${String(e)}`); }
-      };
-
-      // init
-      log(`[INIT] MediaRecorder: ${supported}`);
-    </script>
-  </body>
+    if(heard){
+      const ack = await callChat(`You heard: ${heard}. Reply with a short acknowledgement.`);
+      log(`[SELFTEST] chat(replay) OK: ${ack}`);
+      await callSpeak(ack);
+    }
+    log('[SELFTEST] done');
+  }catch(e){ log(`[SELFTEST] error: ${String(e)}`); }
+};
+</script>
+</body>
 </html>
