@@ -59,7 +59,6 @@ function log(msg){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${
 
 /* =============================================================================
    SECTION 1 — UI ELEMENTS & CONSTANTS
-   (All wiring to buttons / toggle lives here)
 ============================================================================= */
 const holdBtn    = document.getElementById('holdBtn');
 const chatToggle = document.getElementById('chatToggle');
@@ -70,7 +69,7 @@ const textInput  = document.getElementById('textInput');
 const statusEl   = document.getElementById('status');
 const output     = document.getElementById('output');
 
-// Pick a MediaRecorder MIME that actually works on device
+// Candidate mimes; pick supported on device
 const CANDIDATE_MIMES = [
   'audio/webm;codecs=opus', 'audio/webm',
   'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a',
@@ -81,13 +80,13 @@ const supported = CANDIDATE_MIMES.find(t => {
 }) || 'audio/webm';
 log(`[INIT] MediaRecorder supports ${supported}`);
 
-// Force a clean recorder MIME (avoid ";codecs=opus" confusion downstream)
+// Force clean MIME (avoid ";codecs=opus" confusion downstream)
 const REC_MIME = (window.MediaRecorder?.isTypeSupported?.('audio/webm'))
   ? 'audio/webm'
   : supported;
 
 /* =============================================================================
-   SECTION 2 — UTILS (Audio priming, dataURL helper, transcript merge)
+   SECTION 2 — UTILS
 ============================================================================= */
 function blobToDataUrl(blob){
   return new Promise((resolve,reject)=>{
@@ -125,6 +124,21 @@ async function getMic(){
   }catch(e){ log(`[MIC] denied: ${e?.name||'Error'} ${e?.message||''}`); throw e; }
 }
 
+// One-time mic prime so CHAT doesn't need Self-Test first
+let micPrimedOnce = false;
+async function ensureMicPrimedOnce() {
+  if (micPrimedOnce) return;
+  try {
+    await primeAudio();
+    const s = await getMic();
+    s.getTracks().forEach(t=>t.stop());
+    micPrimedOnce = true;
+    log('[PRIME] mic primed on first toggle');
+  } catch (e) {
+    log(`[PRIME] mic prime failed: ${String(e)}`);
+  }
+}
+
 /* =============================================================================
    SECTION 3 — SERVER CALLS (chat, transcribe, speak)
 ============================================================================= */
@@ -148,7 +162,7 @@ async function callSpeak(text){
 }
 
 /* =============================================================================
-   SECTION 4 — TYPE TO CHAT (baseline)
+   SECTION 4 — TYPE TO CHAT
 ============================================================================= */
 sendBtn.onclick = async ()=>{
   const msg=textInput.value.trim(); if(!msg) return;
@@ -163,7 +177,7 @@ sendBtn.onclick = async ()=>{
 textInput.addEventListener('keydown',e=>{ if(e.key==='Enter') sendBtn.click(); });
 
 /* =============================================================================
-   SECTION 5 — HOLD-TO-TALK (single shot): press, speak, release
+   SECTION 5 — HOLD-TO-TALK (single shot)
 ============================================================================= */
 let holdRecorder, holdChunks=[];
 holdBtn.onmousedown = holdStart;
@@ -179,7 +193,7 @@ async function holdStart(){
   holdChunks=[];
   holdRecorder.ondataavailable = ev=>{ if(ev.data && ev.data.size) { holdChunks.push(ev.data); log(`[HOLD] chunk ${ev.data.size} bytes`);} };
   holdRecorder.onstop = async ()=>{
-    const blob = holdChunks[holdChunks.length-1]; // use last complete chunk
+    const blob = holdChunks[holdChunks.length-1];
     if(!blob || !blob.size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
     statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
     try{
@@ -192,21 +206,22 @@ async function holdStart(){
       await callSpeak(reply);
     }catch(e){ output.textContent='Error'; statusEl.textContent='Ready'; log(`[HOLD] ${String(e)}`); }
   };
-  holdRecorder.start(); // single-shot. stop() flushes a complete file
+  holdRecorder.start();
   log(`[HOLD] start (${REC_MIME})`);
 }
 function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.stop(); }catch{} }
 
-  /* =============================================================================
-   SECTION 6 — REALTIME CHAT (keeps listening, multi-turn)
-   Fix: accumulate segments into ONE Blob per utterance before transcribing.
+/* =============================================================================
+   SECTION 6 — REALTIME CHAT (multi-turn)
+   Accumulate segments → one Blob per utterance (fixes "Invalid file format").
+   Optimistic toggle with clear logs.
 ============================================================================= */
 const CHUNK_MS        = 900;   // recorder emits ~1s chunks
 const SILENCE_MS      = 2200;  // finalize after this long with no chunk
 const MIN_CHUNK_BYTES = 800;   // ignore micro-chunks
 
 let rtStream=null, rtRecorder=null;
-let rtChunks=[];                // ← collect segments for the current utterance
+let rtChunks=[];                // segments for current utterance
 let rtLiveHint='', lastChunkAt=0;
 let rtSilenceTimer=null;
 
@@ -219,27 +234,50 @@ chatToggle.addEventListener('click', ()=> toggleRealtime());
 chatToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
 
 async function toggleRealtime(){
-  const on = chatToggle.getAttribute('aria-checked')==='true';
-  if(on){ await stopRealtime(); setChatToggle(false); statusEl.textContent='CHAT OFF. Press-and-hold active.'; return; }
-  await ensureMicPrimedOnce?.();           // if you added the prime-once helper
-  await startRealtime(); setChatToggle(true); statusEl.textContent='CHAT mode: listening…';
+  const isOn = chatToggle.getAttribute('aria-checked') === 'true';
+
+  if (isOn) {
+    // turning OFF — optimistic
+    setChatToggle(false);
+    try { await stopRealtime(); }
+    catch (e) { log(`[CHAT] stop error: ${String(e)}`); }
+    statusEl.textContent = 'CHAT OFF. Press-and-hold active.';
+    return;
+  }
+
+  // turning ON — optimistic
+  setChatToggle(true);
+  statusEl.textContent = 'Starting CHAT…';
+  try {
+    await ensureMicPrimedOnce();
+    await startRealtime();
+    statusEl.textContent = 'CHAT mode: listening…';
+  } catch (e) {
+    // revert if anything failed
+    setChatToggle(false);
+    statusEl.textContent = 'CHAT failed to start.';
+    log(`[CHAT] start error: ${String(e)}`);
+  }
 }
 
 async function startRealtime(){
-  await primeAudio(); // unlock autoplay
+  log('[CHAT] starting realtime…');
+  await primeAudio();
   rtStream = await getMic();
-  try{ rtRecorder = new MediaRecorder(rtStream,{ mimeType: REC_MIME }); } catch { rtRecorder = new MediaRecorder(rtStream); }
+  let rec;
+  try { rec = new MediaRecorder(rtStream,{ mimeType: REC_MIME }); }
+  catch { rec = new MediaRecorder(rtStream); }
+  rtRecorder = rec;
 
   // reset state
   rtChunks=[]; rtLiveHint=''; lastChunkAt=0;
 
-  // Collect segments, but DO NOT send them individually.
+  // Collect segments, do NOT send individually
   rtRecorder.ondataavailable = (ev)=>{
     if(ev.data && ev.data.size){
       if(ev.data.size >= MIN_CHUNK_BYTES){
         rtChunks.push(ev.data);
         lastChunkAt = Date.now();
-        // Optional UX hint so user sees it's listening
         rtLiveHint = '…';
         output.textContent = `You (live): ${rtLiveHint}`;
       } else {
@@ -249,7 +287,7 @@ async function startRealtime(){
   };
 
   rtRecorder.start(CHUNK_MS);
-  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${REC_MIME})`);
+  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${REC_MIME}); state=${rtRecorder.state}`);
 
   // Check for silence to finalize a turn
   rtSilenceTimer = setInterval(checkFinalizeTurn, 250);
@@ -293,8 +331,7 @@ async function checkFinalizeTurn(){
 }
 
 /* =============================================================================
-   SECTION 7 — SELF-TEST (optional): chat → record once → transcribe → reply
-   (Does NOT change app state; only used for diagnostics)
+   SECTION 7 — SELF-TEST (diagnostic)
 ============================================================================= */
 selfTestBtn.onclick = async ()=>{
   log('[SELFTEST] start');
