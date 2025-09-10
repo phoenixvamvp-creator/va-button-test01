@@ -58,14 +58,24 @@
         // (Optional) Data channel -> session settings
         const dc = pc.createDataChannel('oai-events');
         dc.onopen = () => {
-          log('[RT] data channel open; sending session update');
-          try {
-            dc.send(JSON.stringify({
-              type: 'session.update',
-              session: { voice: 'alloy', instructions: 'Speak English only. You are Nyx. Keep replies brief.' }
-            }));
-          } catch (e) { log('[DC] send error:', e?.message||e); }
-        };
+  log('[RT] data channel open; sending session update');
+  try {
+    dc.send(JSON.stringify({
+      type: 'session.update',
+      session: {
+        voice: 'cedar',
+        instructions: 'Speak English only, warm tone, concise replies.'
+      }
+    }));
+    dc.send(JSON.stringify({
+      type: 'response.create',
+      response: { instructions: 'Hello! How are you doing today?' }
+    }));
+  } catch (e) {
+    log('[DC] send error:', e?.message || e);
+  }
+};
+
 
         // 5) Debug current state
         log('Senders:', pc.getSenders().map(s => s.track?.kind || 'none'));
