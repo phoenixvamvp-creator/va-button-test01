@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realtime WebRTC Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 24px; }
+    #voiceToggle { padding: 10px 16px; font-size: 16px; }
+    #log { margin-top: 16px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, monospace; }
+  </style>
+</head>
+<body>
+  <button id="voiceToggle">Start</button>
+  <audio id="assistantAudio" autoplay playsinline></audio>
+  <div id="log"></div>
+
+  <script type="module">
+    const logEl = document.getElementById('log');
+    const log = (...a)=>{ logEl.textContent += a.join(' ') + '\n'; console.log(...a); };
+
+    let pc=null, mic=null;
+    const btn=document.getElementById('voiceToggle');
+    const audioEl=document.getElementById('assistantAudio');
+
+    async function startRealtime(){
+      log('[RT] getUserMedia…');
+      mic = await navigator.mediaDevices.getUserMedia({ audio:true });
+
+      pc = new RTCPeerConnection();
+      pc.oniceconnectionstatechange = ()=> log('ICE:', pc.iceConnectionState);
+      pc.onconnectionstatechange   = ()=> log('PC:',  pc.connectionState);
+
+      pc.ontrack = (e)=>{
+        log('[RT] ontrack: remote stream received');
+        audioEl.srcObject = e.streams[0];
+        // nudge autoplay on some browsers
+        audioEl.play().catch(()=>{});
+      };
+
+      // (optional) data channel to send session settings (voice, instructions)
+      const dc = pc.createDataChannel("oai-events");
+      dc.onopen = ()=>{
+        log('[RT] data channel open; sending session update');
+        try {
+          dc.send(JSON.stringify({
+            type: "session.update",
+            session: {
+              voice: "verse",
+              instructions: "You are Nyx. Keep replies brief."
+            }
+          }));
+        } catch {}
+      };
+
+      // send mic to the model
+      pc.addTrack(mic.getTracks()[0], mic);
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      log('[RT] offer created; posting to /api/realtime/offer');
+
+      const res = await fetch("/api/realtime/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/sdp" },
+        body: offer.sdp
+      });
+
+      const text = await res.text();
+      log('[RT] offer->answer status:', res.status);
+
+      if (!res.ok) throw new Error(text);
+
+      await pc.setRemoteDescription({ type:"answer", sdp: text });
+      log('[RT] remote description set; waiting for audio…');
+    }
+
+    function stopRealtime(){
+      try{ pc?.getSenders().forEach(s=>s.track?.stop()); pc?.close(); }catch{}
+      pc=null; mic?.getTracks().forEach(t=>t.stop()); mic=null; audioEl.srcObject=null;
+      log('[RT] stopped');
+    }
+
+    let live=false;
+    btn.addEventListener('click', async ()=>{
+      btn.disabled=true;
+      try{
+        if(!live){ btn.textContent="Connecting…"; await startRealtime(); live=true; btn.textContent="Stop"; }
+        else{ stopRealtime(); live=false; btn.textContent="Start"; }
+      }catch(e){ console.error(e); log('[ERR]', e?.message || e); stopRealtime(); live=false; btn.textContent="Start"; }
+      finally{ btn.disabled=false; }
+    });
+  </script>
+</body>
+</html>
