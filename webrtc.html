@@ -62,7 +62,7 @@
           try {
             dc.send(JSON.stringify({
               type: 'session.update',
-              session: { voice: 'verse', instructions: 'You are Nyx. Keep replies brief.' }
+              session: { voice: 'aria', instructions: 'Speak English until you are asked to speak another language. You are Nyx. Keep replies brief.' }
             }));
           } catch (e) { log('[DC] send error:', e?.message||e); }
         };
