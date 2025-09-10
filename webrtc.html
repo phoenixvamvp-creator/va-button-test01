@@ -26,7 +26,7 @@
 
     async function startRealtime(){
       try {
-        // Permissions debug
+        // Permissions info (helpful on mobile)
         try {
           if ('permissions' in navigator && navigator.permissions?.query) {
             const p = await navigator.permissions.query({ name: 'microphone' });
@@ -50,14 +50,11 @@
           audioEl.play().catch(err=>log('[AUDIO] play() blocked:', err?.message||err));
         };
 
-        // Ensure audio m-line (send+recv) and attach mic
-        const tx = pc.addTransceiver(micTrack, { direction: 'sendrecv' });
-        try { await tx.sender.replaceTrack(micTrack); } catch {}
+        // === Attach audio exactly once ===
+        // This creates a sender for the mic and also requests remote audio back.
+        pc.addTransceiver(micTrack, { direction: 'sendrecv' });
 
-        // Also add the track (some stacks require both)
-        pc.addTrack(micTrack, mic);
-
-        // Optional DC for session settings
+        // Optional data channel (for session settings)
         const dc = pc.createDataChannel('oai-events');
         dc.onopen = () => {
           log('[RT] data channel open; sending session update');
@@ -70,18 +67,17 @@
         };
 
         // Debug current PC state before offer
-        log('Tracks added:', mic.getTracks().map(t => t.kind));
         log('Senders:', pc.getSenders().map(s => s.track?.kind || 'none'));
         log('Transceivers:', pc.getTransceivers().map(tx => ({ direction: tx.direction, mid: tx.mid })));
 
+        // Create offer; legacy hint encourages a recv audio m-line too
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
         await pc.setLocalDescription(offer);
 
         const sdpPreview = offer.sdp ? offer.sdp.slice(0, 500) : 'NO_SDP';
         log('[RT] SDP offer preview (first 500 chars):\n' + sdpPreview);
-
         if (!offer.sdp?.includes('m=audio')) {
-          log('[ERR] SDP has no m=audio line — the server will reject this. Check permissions or track attachment.');
+          log('[ERR] SDP has no m=audio line — server will reject this.');
         }
 
         log('[RT] posting offer to /api/realtime/offer');
