@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Realtime WebRTC Test</title>
+  <title>Realtime WebRTC Debug</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 24px; }
     #voiceToggle { padding: 10px 16px; font-size: 16px; }
@@ -35,35 +35,26 @@
       pc.ontrack = (e)=>{
         log('[RT] ontrack: remote stream received');
         audioEl.srcObject = e.streams[0];
-        // Nudge autoplay on some browsers
         audioEl.play().catch(()=>{});
       };
 
-      // IMPORTANT: request remote audio so the SDP has a recv section
-      pc.addTransceiver('audio', { direction: 'recvonly' });
+      // Ensure both send + receive audio
+      const micTrack = mic.getTracks()[0];
+      pc.addTransceiver(micTrack, { direction: 'sendrecv' });
+      pc.addTrack(micTrack, mic);
 
-      // Send our mic audio
-      pc.addTrack(mic.getTracks()[0], mic);
+      // Debug: show what we’ve got
+      log('Tracks added:', mic.getTracks().map(t => t.kind));
+      log('Senders:', pc.getSenders().map(s => s.track?.kind || 'none'));
+      log('Transceivers:', pc.getTransceivers().map(tx => ({ direction: tx.direction, mid: tx.mid })));
 
-      // Optional data channel (for session updates like voice/instructions)
-      const dc = pc.createDataChannel('oai-events');
-      dc.onopen = () => {
-        log('[RT] data channel open; sending session update');
-        try {
-          dc.send(JSON.stringify({
-            type: 'session.update',
-            session: {
-              voice: 'verse',
-              instructions: 'You are Nyx. Keep replies brief.'
-            }
-          }));
-        } catch {}
-      };
-
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
       await pc.setLocalDescription(offer);
-      log('[RT] offer created; posting to /api/realtime/offer');
 
+      // Print the first 400 chars of the SDP
+      log('[RT] SDP offer preview:\n' + offer.sdp.slice(0, 400));
+
+      log('[RT] posting offer to /api/realtime/offer');
       const res = await fetch('/api/realtime/offer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/sdp' },
