@@ -1,385 +1,54 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>PhoenixVA — Voice + Text Portal</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    :root { --scarlet:#b3132c; }
-    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
-    h1 { margin: 0 0 12px; }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin: 8px 0; }
-    input[type="text"] { flex: 1 1 340px; max-width: 100%; padding: 10px; font-size: 16px; border:1px solid #ddd; border-radius:8px; }
-    button { padding: 10px 14px; font-size: 15px; border-radius:10px; cursor:pointer; }
-    #output { margin-top: 12px; padding: 12px; border: 1px solid #ddd; min-height: 100px; white-space: pre-wrap; border-radius:8px; }
-    #diag { margin-top: 10px; padding:8px; border:1px solid #eee; background:#fafafa; white-space:pre-wrap; max-height: 260px; overflow:auto; border-radius:8px; font-size:12px; }
-    #status { color:#666; }
-    /* CHAT toggle */
-    .toggle-wrap { display:flex; align-items:center; gap:10px; padding:8px 12px; border:2px solid #000; border-radius:16px; background:#000; }
-    .toggle-label { color: var(--scarlet); font-weight:700; }
-    .toggle { position:relative; width:76px; height:40px; border-radius:999px; background:#222; border:2px solid var(--scarlet); cursor:pointer; padding:2px; }
-    .thumb { width:34px; height:34px; background:var(--scarlet); border-radius:999px; transform:translateX(0); transition:transform .2s; }
-    .toggle[aria-checked="true"] .thumb { transform:translateX(36px); }
-    .badge { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--scarlet); color:var(--scarlet); background:#000; }
-    .badge.off { border-color:#333; color:#666; }
-    .pill { font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid #ddd; background:#f3f3f3; }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Realtime Voice Test</title>
 </head>
 <body>
-  <h1>PhoenixVA — Voice + Text Portal</h1>
+  <button id="voiceToggle">Start</button>
+  <audio id="assistantAudio" autoplay playsinline></audio>
 
-  <div class="row">
-    <button id="holdBtn">🎙️ Hold to Talk</button>
+  <script type="module">
+    let pc=null, mic=null;
+    const btn=document.getElementById('voiceToggle');
+    const audioEl=document.getElementById('assistantAudio');
 
-    <div class="toggle-wrap" role="group" aria-label="Realtime chat toggle">
-      <span class="toggle-label">CHAT</span>
-      <div id="chatToggle" class="toggle" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle realtime chat"><div class="thumb"></div></div>
-      <span id="chatBadge" class="badge off">OFF</span>
-      <span style="color:var(--scarlet); font-size:12px;">Realtime voice when ON</span>
-    </div>
+    async function startRealtime(){
+      mic = await navigator.mediaDevices.getUserMedia({ audio:true });
+      pc = new RTCPeerConnection();
+      pc.ontrack = (e)=>{ audioEl.srcObject = e.streams[0]; };
+      pc.addTrack(mic.getTracks()[0], mic);
+      pc.createDataChannel("oai-events");
 
-    <button id="selfTestBtn" class="pill" title="End-to-end probe">Run Self-Test</button>
-    <span id="status"></span>
-  </div>
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-  <div class="row">
-    <input id="textInput" type="text" placeholder="Type your message…" />
-    <button id="sendBtn">Send</button>
-  </div>
+      const res = await fetch("/api/realtime/offer", {
+        method:"POST",
+        headers:{ "Content-Type":"application/sdp" },
+        body: offer.sdp
+      });
+      if(!res.ok) throw new Error(await res.text());
 
-  <div id="output">Ready.</div>
-  <div id="diag">[START] Page loaded.</div>
-
-<script>
-/* =============================================================================
-   SECTION 0 — LIGHTWEIGHT LOGGER
-============================================================================= */
-const diag = document.getElementById('diag');
-function log(msg){ diag.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`; diag.scrollTop = diag.scrollHeight; }
-
-/* =============================================================================
-   SECTION 1 — UI ELEMENTS & CONSTANTS
-============================================================================= */
-const holdBtn    = document.getElementById('holdBtn');
-const chatToggle = document.getElementById('chatToggle');
-const chatBadge  = document.getElementById('chatBadge');
-const selfTestBtn= document.getElementById('selfTestBtn');
-const sendBtn    = document.getElementById('sendBtn');
-const textInput  = document.getElementById('textInput');
-const statusEl   = document.getElementById('status');
-const output     = document.getElementById('output');
-
-// Candidate mimes; pick supported on device
-const CANDIDATE_MIMES = [
-  'audio/webm;codecs=opus', 'audio/webm',
-  'audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a',
-  'audio/mpeg'
-];
-const supported = CANDIDATE_MIMES.find(t => {
-  try { return window.MediaRecorder?.isTypeSupported?.(t); } catch { return false; }
-}) || 'audio/webm';
-log(`[INIT] MediaRecorder supports ${supported}`);
-
-// Force clean MIME (avoid ";codecs=opus" confusion downstream)
-const REC_MIME = (window.MediaRecorder?.isTypeSupported?.('audio/webm'))
-  ? 'audio/webm'
-  : supported;
-
-/* =============================================================================
-   SECTION 2 — UTILS
-============================================================================= */
-function blobToDataUrl(blob){
-  return new Promise((resolve,reject)=>{
-    const fr=new FileReader();
-    fr.onload=()=>resolve(fr.result);
-    fr.onerror=reject;
-    fr.readAsDataURL(blob);
-  });
-}
-function mergeTranscript(a,b){
-  if(!a) return (b||'').trim();
-  if(!b) return a;
-  const x=a.trim(), y=b.trim();
-  if(y.startsWith(x)) return y;
-  if(x.endsWith(y)) return x;
-  if(y.endsWith(x)) return y;
-  return (x + (x.endsWith(' ')?' ':' ') + y).trim();
-}
-async function primeAudio(){
-  try{
-    const ctx = new (window.AudioContext||window.webkitAudioContext)();
-    const src = ctx.createBufferSource(); src.buffer = ctx.createBuffer(1,1,22050);
-    src.connect(ctx.destination); src.start(0);
-    await new Promise(r=>setTimeout(r,30)); ctx.close();
-    log('[PRIME] Audio unlocked');
-  }catch(e){ log(`[PRIME] error: ${String(e)}`); }
-}
-async function getMic(){
-  try{
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true, channelCount:1 }
-    });
-    log('[MIC] permission granted');
-    return stream;
-  }catch(e){ log(`[MIC] denied: ${e?.name||'Error'} ${e?.message||''}`); throw e; }
-}
-
-// One-time mic + encoder warm-up so CHAT doesn't need Self-Test first
-let micPrimedOnce = false;
-async function ensureMicPrimedOnce() {
-  if (micPrimedOnce) return;
-  try {
-    await primeAudio();                       // unlock autoplay
-    const s = await getMic();                 // permission prompt
-
-    // Warm the encoder with a tiny hidden recording and discard it
-    let tmpRec;
-    try { tmpRec = new MediaRecorder(s, { mimeType: REC_MIME }); }
-    catch { tmpRec = new MediaRecorder(s); }
-
-    await new Promise((resolve) => {
-      const chunks = [];
-      tmpRec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-      tmpRec.onstop = resolve;
-      tmpRec.start(300);                      // ~0.3s to ensure a self-contained blob
-      setTimeout(() => {
-        try { tmpRec.requestData && tmpRec.requestData(); } catch {}
-        try { tmpRec.stop(); } catch {}
-      }, 400);
-    });
-
-    s.getTracks().forEach(t=>t.stop());       // release
-    micPrimedOnce = true;
-    log('[PRIME] mic+encoder warmed up');
-  } catch (e) {
-    log(`[PRIME] mic prime failed: ${String(e)}`);
-  }
-}
-
-/* =============================================================================
-   SECTION 3 — SERVER CALLS (chat, transcribe, speak)
-============================================================================= */
-async function callChat(message){
-  const r = await fetch('/api/chat',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message }) });
-  const ct=r.headers.get('content-type')||''; const j = ct.includes('application/json')? await r.json() : { error: await r.text() };
-  if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-  return j.reply || '';
-}
-async function callTranscribe(dataUrl){
-  const r = await fetch('/api/transcribe',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ audio: dataUrl }) });
-  const ct=r.headers.get('content-type')||''; const j = ct.includes('application/json')? await r.json() : { error: await r.text() };
-  if(!r.ok || j.error) throw new Error(j.error || r.statusText);
-  return (j.text||'').trim();
-}
-async function callSpeak(text){
-  const r = await fetch('/api/speak',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, voice:'alloy' }) });
-  if(!r.ok){ log(`[TTS] HTTP ${r.status} ${r.statusText}`); return; }
-  const url = URL.createObjectURL(new Blob([await r.arrayBuffer()],{type:'audio/mpeg'}));
-  const a = new Audio(url); a.play().catch(err=>log(`[TTS] play blocked: ${String(err)}`));
-}
-
-/* =============================================================================
-   SECTION 4 — TYPE TO CHAT
-============================================================================= */
-sendBtn.onclick = async ()=>{
-  const msg=textInput.value.trim(); if(!msg) return;
-  textInput.value='';
-  output.textContent='Thinking…';
-  try{
-    const reply=await callChat(msg);
-    output.textContent=reply;
-    await callSpeak(reply);
-  }catch(e){ output.textContent='Chat error'; log(`[CHAT] ${String(e)}`); }
-};
-textInput.addEventListener('keydown',e=>{ if(e.key==='Enter') sendBtn.click(); });
-
-/* =============================================================================
-   SECTION 5 — HOLD-TO-TALK (single shot)
-============================================================================= */
-let holdRecorder, holdChunks=[];
-holdBtn.onmousedown = holdStart;
-holdBtn.ontouchstart = e=>{e.preventDefault(); holdStart();};
-holdBtn.onmouseup    = holdStop;
-holdBtn.ontouchend   = e=>{e.preventDefault(); holdStop();};
-holdBtn.onmouseleave = ()=>{ if(holdRecorder && holdRecorder.state==='recording') holdStop(); };
-
-async function holdStart(){
-  statusEl.textContent='Recording… (hold)';
-  const stream = await getMic();
-  try{ holdRecorder = new MediaRecorder(stream,{ mimeType: REC_MIME }); } catch { holdRecorder = new MediaRecorder(stream); }
-  holdChunks=[];
-  holdRecorder.ondataavailable = ev=>{ if(ev.data && ev.data.size) { holdChunks.push(ev.data); log(`[HOLD] chunk ${ev.data.size} bytes`);} };
-  holdRecorder.onstop = async ()=>{
-    const blob = holdChunks[holdChunks.length-1];
-    if(!blob || !blob.size){ statusEl.textContent='No audio'; output.textContent='No audio captured.'; return; }
-    statusEl.textContent='Transcribing…'; output.textContent='Transcribing…';
-    try{
-      const text = await callTranscribe(await blobToDataUrl(blob));
-      if(!text){ output.textContent='No speech detected.'; statusEl.textContent='Ready'; return; }
-      output.textContent='You said: ' + text + '\nThinking…';
-      const reply = await callChat(text);
-      output.textContent = 'You said: ' + text + '\nAssistant: ' + reply;
-      statusEl.textContent='Ready';
-      await callSpeak(reply);
-    }catch(e){ output.textContent='Error'; statusEl.textContent='Ready'; log(`[HOLD] ${String(e)}`); }
-  };
-  holdRecorder.start();
-  log(`[HOLD] start (${REC_MIME})`);
-}
-function holdStop(){ statusEl.textContent='Processing…'; try{ holdRecorder.stop(); }catch{} }
-
-/* =============================================================================
-   SECTION 6 — REALTIME CHAT (multi-turn)
-   Accumulate segments → one Blob per utterance (fixes "Invalid file format").
-   Optimistic toggle with clear logs.
-============================================================================= */
-const CHUNK_MS        = 900;   // recorder emits ~1s segments
-const SILENCE_MS      = 2200;  // finalize after this long with no segment
-const MIN_CHUNK_BYTES = 800;   // ignore micro-chunks
-
-let rtStream=null, rtRecorder=null;
-let rtChunks=[];                // segments for current utterance
-let rtLiveHint='', lastChunkAt=0;
-let rtSilenceTimer=null;
-
-function setChatToggle(on){
-  chatToggle.setAttribute('aria-checked', on?'true':'false');
-  chatBadge.textContent = on ? 'ON' : 'OFF';
-  chatBadge.classList.toggle('off', !on);
-}
-chatToggle.addEventListener('click', ()=> toggleRealtime());
-chatToggle.addEventListener('keydown', e=>{ if(e.key===' '||e.key==='Enter'){ e.preventDefault(); toggleRealtime(); } });
-
-async function toggleRealtime(){
-  const isOn = chatToggle.getAttribute('aria-checked') === 'true';
-
-  if (isOn) {
-    // turning OFF — optimistic
-    setChatToggle(false);
-    try { await stopRealtime(); }
-    catch (e) { log(`[CHAT] stop error: ${String(e)}`); }
-    statusEl.textContent = 'CHAT OFF. Press-and-hold active.';
-    return;
-  }
-
-  // turning ON — optimistic
-  setChatToggle(true);
-  statusEl.textContent = 'Starting CHAT…';
-  try {
-    await ensureMicPrimedOnce();
-    await startRealtime();
-    statusEl.textContent = 'CHAT mode: listening…';
-  } catch (e) {
-    // revert if anything failed
-    setChatToggle(false);
-    statusEl.textContent = 'CHAT failed to start.';
-    log(`[CHAT] start error: ${String(e)}`);
-  }
-}
-
-async function startRealtime(){
-  log('[CHAT] starting realtime…');
-  await ensureMicPrimedOnce();             // belt-and-braces
-  await primeAudio();
-  rtStream = await getMic();
-  let rec;
-  try { rec = new MediaRecorder(rtStream,{ mimeType: REC_MIME }); }
-  catch { rec = new MediaRecorder(rtStream); }
-  rtRecorder = rec;
-
-  // reset state
-  rtChunks=[]; rtLiveHint=''; lastChunkAt=0;
-
-  // Collect segments, do NOT send individually
-  rtRecorder.ondataavailable = (ev)=>{
-    if(ev.data && ev.data.size){
-      if(ev.data.size >= MIN_CHUNK_BYTES){
-        rtChunks.push(ev.data);
-        lastChunkAt = Date.now();
-        rtLiveHint = '…';
-        output.textContent = `You (live): ${rtLiveHint}`;
-      } else {
-        log(`[CHAT] skip tiny ${ev.data.size}B`);
-      }
+      const answerSdp = await res.text();
+      await pc.setRemoteDescription({ type:"answer", sdp: answerSdp });
     }
-  };
 
-  rtRecorder.start(CHUNK_MS);
-  log(`[CHAT] recorder started @ ${CHUNK_MS}ms (${REC_MIME}); state=${rtRecorder.state}`);
-
-  // Check for silence to finalize a turn
-  rtSilenceTimer = setInterval(checkFinalizeTurn, 250);
-}
-
-async function stopRealtime(){
-  try{ if(rtSilenceTimer) clearInterval(rtSilenceTimer); }catch{}
-  rtSilenceTimer=null;
-
-  try{ if(rtRecorder && rtRecorder.state!=='inactive') rtRecorder.stop(); }catch{}
-  rtRecorder=null;
-
-  try{ if(rtStream) rtStream.getTracks().forEach(t=>t.stop()); }catch{}
-  rtStream=null;
-
-  rtChunks=[]; rtLiveHint=''; lastChunkAt=0;
-}
-
-async function checkFinalizeTurn(){
-  if(!rtChunks.length) return;                        // nothing captured yet
-  if(Date.now() - lastChunkAt < SILENCE_MS) return;   // still speaking
-
-  // Build ONE proper file for the utterance
-  const blob = new Blob(rtChunks, { type: REC_MIME });
-  rtChunks = [];                                      // clear for next turn
-  rtLiveHint = '';
-
-  output.textContent = `You (live): (processing…)`;
-  try{
-    const text = await callTranscribe(await blobToDataUrl(blob));
-    if(!text){ output.textContent='(no speech detected)'; return; }
-
-    output.textContent = `You: ${text}\nThinking…`;
-    const reply = await callChat(text);
-    output.textContent = `You: ${text}\nAssistant: ${reply}`;
-    await callSpeak(reply);
-  }catch(e){
-    log(`[CHAT] finalize error: ${String(e)}`);
-    output.textContent = 'Transcribe/chat error.';
-  }
-}
-
-/* =============================================================================
-   SECTION 7 — SELF-TEST (diagnostic)
-============================================================================= */
-selfTestBtn.onclick = async ()=>{
-  log('[SELFTEST] start');
-  try{
-    const hello = await callChat('Say “hello” in five words.');
-    log(`[SELFTEST] chat OK: ${hello}`);
-
-    const stream = await getMic();
-    let rec; try{ rec = new MediaRecorder(stream,{ mimeType: REC_MIME }); }catch{ rec = new MediaRecorder(stream); }
-    const chunks=[];
-    rec.ondataavailable = e=>{ if(e.data && e.data.size){ chunks.push(e.data); log(`[SELFTEST] chunk ${e.data.size}B`);} };
-    rec.start(); log('[SELFTEST] recording ~3s…');
-    await new Promise(r=>setTimeout(r,3000));
-    try{ rec.requestData && rec.requestData(); }catch{}
-    rec.stop(); await new Promise(r=>rec.onstop=r);
-    stream.getTracks().forEach(t=>t.stop());
-
-    const blob = chunks[chunks.length-1];
-    if(!blob || !blob.size){ log('[SELFTEST] no audio captured'); return; }
-    const heard = await callTranscribe(await blobToDataUrl(blob));
-    log(`[SELFTEST] heard: ${heard||'(empty)'}`);
-
-    if(heard){
-      const ack = await callChat(`You heard: ${heard}. Reply with a short acknowledgement.`);
-      log(`[SELFTEST] chat(replay) OK: ${ack}`);
-      await callSpeak(ack);
+    function stopRealtime(){
+      try{ pc?.getSenders().forEach(s=>s.track?.stop()); pc?.close(); }catch{}
+      pc=null; mic?.getTracks().forEach(t=>t.stop()); mic=null; audioEl.srcObject=null;
     }
-    log('[SELFTEST] done');
-  }catch(e){ log(`[SELFTEST] error: ${String(e)}`); }
-};
-</script>
+
+    let live=false;
+    btn.addEventListener('click', async ()=>{
+      btn.disabled=true;
+      try{
+        if(!live){ btn.textContent="Connecting…"; await startRealtime(); live=true; btn.textContent="Stop"; }
+        else{ stopRealtime(); live=false; btn.textContent="Start"; }
+      }catch(e){ console.error(e); alert("Voice connection failed (see console)."); stopRealtime(); live=false; btn.textContent="Start"; }
+      finally{ btn.disabled=false; }
+    });
+  </script>
 </body>
 </html>
