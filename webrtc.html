@@ -26,7 +26,7 @@
 
     async function startRealtime(){
       try {
-        // Permission hint (especially helpful on mobile)
+        // 1) Permission hint
         try {
           if ('permissions' in navigator && navigator.permissions?.query) {
             const p = await navigator.permissions.query({ name: 'microphone' });
@@ -34,28 +34,28 @@
           }
         } catch {}
 
+        // 2) Get mic
         log('[RT] getUserMedia…');
         mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         const micTrack = mic.getTracks()[0];
         log('[MIC] track state:', micTrack?.readyState || 'none');
 
+        // 3) PeerConnection + event hooks
         pc = new RTCPeerConnection();
-
         pc.oniceconnectionstatechange = ()=> log('ICE:', pc.iceConnectionState);
         pc.onconnectionstatechange   = ()=> log('PC:',  pc.connectionState);
-
         pc.ontrack = (e)=>{
           log('[RT] ontrack: remote stream received');
           audioEl.srcObject = e.streams[0];
           audioEl.play().catch(err=>log('[AUDIO] play() blocked:', err?.message||err));
         };
 
-        // --- Attach audio once, with stream, so SDP has a proper a=msid ---
+        // 4) Attach audio ONCE via transceiver, and associate the stream
         const tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
         try { await tx.sender.replaceTrack(micTrack); } catch {}
         if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
 
-        // Optional data channel (session settings)
+        // (Optional) Data channel -> session settings
         const dc = pc.createDataChannel('oai-events');
         dc.onopen = () => {
           log('[RT] data channel open; sending session update');
@@ -67,22 +67,34 @@
           } catch (e) { log('[DC] send error:', e?.message||e); }
         };
 
+        // 5) Debug current state
         log('Senders:', pc.getSenders().map(s => s.track?.kind || 'none'));
-        log('Transceivers:', pc.getTransceivers().map(tx => ({ direction: tx.direction, mid: tx.mid })));
+        log('Transceivers:', pc.getTransceivers().map(x => ({ direction: x.direction, mid: x.mid })));
 
-        // Offer; legacy hint encourages recv section too
+        // 6) Create offer (include legacy hint)
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
         await pc.setLocalDescription(offer);
 
-        const sdpPreview = offer.sdp ? offer.sdp.slice(0, 600) : 'NO_SDP';
-        log('[RT] SDP offer preview (first 600 chars):\n' + sdpPreview);
-        if (!offer.sdp?.includes('m=audio')) {
-          log('[ERR] SDP has no m=audio line — server will reject this.');
-        }
-        if (!offer.sdp?.includes('a=msid:')) {
-          log('[WARN] SDP has no a=msid; setting sender streams usually adds it.');
-        }
+        // ---- SDP LOGGING (this is what we need) ----
+        const sdp = offer.sdp || '';
+        log('[RT] SDP offer (first 5000 chars):\n' + sdp.slice(0, 5000));
 
+        // Extract just the audio media section for clarity
+        const audioSection = (() => {
+          const start = sdp.indexOf('\nm=audio ');
+          if (start === -1) return '';
+          const nextM = sdp.indexOf('\nm=', start + 1);
+          return sdp.slice(start + 1, nextM === -1 ? sdp.length : nextM);
+        })();
+        log('[RT] AUDIO SECTION >>>\n' + (audioSection || '<<none found>>'));
+
+        // Quick checks
+        log('[CHK] has m=audio:', sdp.includes('\nm=audio '));
+        log('[CHK] has opus codec:', sdp.includes('a=rtpmap:111 opus/48000/2'));
+        log('[CHK] has msid:', sdp.includes('a=msid:'));
+        log('[CHK] has direction (send/recv):', /a=(sendrecv|sendonly|recvonly)/.test(audioSection));
+
+        // 7) Send offer to your proxy -> OpenAI
         log('[RT] posting offer to /api/realtime/offer');
         const res = await fetch('/api/realtime/offer', {
           method: 'POST',
@@ -99,6 +111,7 @@
           throw new Error('Offer->Answer failed');
         }
 
+        // 8) Apply answer
         await pc.setRemoteDescription({ type: 'answer', sdp: text });
         log('[RT] remote description set; waiting for audio…');
 
