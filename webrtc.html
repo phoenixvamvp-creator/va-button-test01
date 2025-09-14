@@ -50,7 +50,7 @@
           audioEl.play().catch(err=>log('[AUDIO] play() blocked:', err?.message||err));
         };
 
-        // 4) Attach audio ONCE via transceiver, and associate the stream
+        // 4) Attach audio via transceiver
         const tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
         try { await tx.sender.replaceTrack(micTrack); } catch {}
         if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
@@ -58,38 +58,36 @@
         // (Optional) Data channel -> session settings
         const dc = pc.createDataChannel('oai-events');
         dc.onopen = () => {
-  log('[RT] data channel open; sending session update');
-  try {
-    dc.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        voice: 'cedar',
-        instructions: 'Speak English only, warm tone, concise replies.'
-      }
-    }));
-    dc.send(JSON.stringify({
-      type: 'response.create',
-      response: { instructions: 'Hello! How are you doing today?' }
-    }));
-  } catch (e) {
-    log('[DC] send error:', e?.message || e);
-  }
-};
-
+          log('[RT] data channel open; sending session update');
+          try {
+            dc.send(JSON.stringify({
+              type: 'session.update',
+              session: {
+                voice: 'cedar',
+                instructions: 'Speak English only, warm tone, concise replies.'
+              }
+            }));
+            dc.send(JSON.stringify({
+              type: 'response.create',
+              response: { instructions: 'Hello! How are you doing today?' }
+            }));
+          } catch (e) {
+            log('[DC] send error:', e?.message || e);
+          }
+        };
 
         // 5) Debug current state
         log('Senders:', pc.getSenders().map(s => s.track?.kind || 'none'));
         log('Transceivers:', pc.getTransceivers().map(x => ({ direction: x.direction, mid: x.mid })));
 
-        // 6) Create offer (include legacy hint)
+        // 6) Create offer
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
         await pc.setLocalDescription(offer);
 
-        // ---- SDP LOGGING (this is what we need) ----
+        // ---- SDP LOGGING ----
         const sdp = offer.sdp || '';
         log('[RT] SDP offer (first 5000 chars):\n' + sdp.slice(0, 5000));
 
-        // Extract just the audio media section for clarity
         const audioSection = (() => {
           const start = sdp.indexOf('\nm=audio ');
           if (start === -1) return '';
@@ -97,8 +95,6 @@
           return sdp.slice(start + 1, nextM === -1 ? sdp.length : nextM);
         })();
         log('[RT] AUDIO SECTION >>>\n' + (audioSection || '<<none found>>'));
-
-        // Quick checks
         log('[CHK] has m=audio:', sdp.includes('\nm=audio '));
         log('[CHK] has opus codec:', sdp.includes('a=rtpmap:111 opus/48000/2'));
         log('[CHK] has msid:', sdp.includes('a=msid:'));
@@ -109,7 +105,9 @@
         const res = await fetch('/api/realtime/offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
-          body: offer.sdp
+          body: offer.sdp,
+          // ✅ ensure cookies (gTokens) are sent to the backend
+          credentials: 'include'
         });
 
         const text = await res.text();
