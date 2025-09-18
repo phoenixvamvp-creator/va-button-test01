@@ -1,4 +1,3 @@
-// api/realtime/offer.js
 const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
 const MAIN_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 
@@ -6,7 +5,7 @@ function isAllowedOrigin(origin) {
   if (!MAIN_ORIGIN) return true;
   if (!origin) return true;
   if (origin === MAIN_ORIGIN) return true;
-  if (/^https:\/\/va-button-test01-.*\.vercel\.app$/.test(origin)) return true;
+  if (/^https:\/\/va-button-test01-.*\.vercel\.app$/.test(origin)) return true; // previews
   return false;
 }
 
