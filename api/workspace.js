@@ -1,82 +1,33 @@
-// api/workspace.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-/**
- * Unified Google Workspace API (Drive + Sheets + Docs) for Phoenix VA POC.
- *
- * All routes are POST with JSON and require the HttpOnly cookie "gTokens"
- * set by /api/google (OAuth).
- *
- * Actions (use ?action=...):
- *  - drive.search
- *      body: { name?: string, folderName?: string, mimeType?: string, pageSize?: number }
- *
- *  - docs.createAppend
- *      body: { docName: string, folderName?: string, text: string }
- *
- *  - sheets.read
- *      body: { fileName: string, folderName?: string, tab?: string, range?: string }
- *
- *  - sheets.appendRow
- *      body: { fileName: string, folderName?: string, tab?: string, values: any[] }
- *
- *  - sheets.updateCell
- *      body: { fileName: string, folderName?: string, tab?: string, cell: string, value: any }
- *
- * Notes
- *  - Folder resolution is best-effort: prefers exact name, else newest modified.
- *  - Sheets ranges are A1 notation. If "range" not provided for sheets.read, defaults to `${tab || 'Sheet1'}!A:Z`.
- *  - All responses are JSON; on upstream Google errors you'll get { error, details }.
- */
-
-// ---------- utils ----------
-type GTokens = {
-  access_token: string;
-  refresh_token?: string;
-  scope?: string;
-  token_type?: string;
-  expiry_date?: number;
-};
-
-function json(res: VercelResponse, status: number, body: any) {
+// Unified Drive + Sheets + Docs behind actions on POST /api/workspace?action=...
+function json(res, status, body) {
   res.status(status).setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(body));
 }
-
-function parseBody(req: VercelRequest): any {
+function parseBody(req) {
   if (!req.body) return {};
-  if (typeof req.body === 'string') {
-    try { return JSON.parse(req.body); } catch { return {}; }
-  }
+  if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
   return req.body;
 }
-
-function getTokensFromCookie(req: VercelRequest): GTokens | null {
+function getTokensFromCookie(req) {
   const raw = req.headers.cookie || '';
   const m = raw.match(/(?:^|;\s*)gTokens=([^;]+)/);
   if (!m) return null;
-  try { return JSON.parse(decodeURIComponent(m[1])) as GTokens; }
-  catch { return null; }
+  try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
 }
-
-function setTokensCookie(res: VercelResponse, req: VercelRequest, tokens: GTokens) {
+function setTokensCookie(res, req, tokens) {
   const enc = encodeURIComponent(JSON.stringify(tokens));
-  const maxAge = 60 * 60 * 24 * 30; // seconds
+  const maxAge = 60 * 60 * 24 * 30;
   const base = `gTokens=${enc}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
   const host = (req.headers.host || '').toLowerCase();
   const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
   res.setHeader('Set-Cookie', isLocal ? base : `${base}; Secure`);
 }
-
-// ---------- Google helpers ----------
-async function refreshAccessToken(tokens: GTokens): Promise<GTokens> {
+async function refreshAccessToken(tokens) {
   if (!tokens.refresh_token) throw new Error('No refresh_token available');
-  const client_id = process.env.GOOGLE_CLIENT_ID!;
-  const client_secret = process.env.GOOGLE_CLIENT_SECRET!;
   const form = new URLSearchParams({
-    client_id,
-    client_secret,
-    refresh_token: tokens.refresh_token!,
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    client_secret: process.env.GOOGLE_CLIENT_SECRET,
+    refresh_token: tokens.refresh_token,
     grant_type: 'refresh_token',
   });
   const r = await fetch('https://oauth2.googleapis.com/token', {
@@ -85,9 +36,7 @@ async function refreshAccessToken(tokens: GTokens): Promise<GTokens> {
     body: form.toString(),
   });
   const data = await r.json();
-  if (!r.ok || !data.access_token) {
-    throw new Error(`Refresh failed: ${data.error || r.statusText}`);
-  }
+  if (!r.ok || !data.access_token) throw new Error(`Refresh failed: ${data.error || r.statusText}`);
   return {
     ...tokens,
     access_token: data.access_token,
@@ -96,13 +45,7 @@ async function refreshAccessToken(tokens: GTokens): Promise<GTokens> {
     expiry_date: data.expires_in ? Date.now() + data.expires_in * 1000 : tokens.expiry_date,
   };
 }
-
-async function withRefresh(
-  tokensIn: GTokens,
-  res: VercelResponse,
-  req: VercelRequest,
-  call: (accessToken: string) => Promise<{ ok: boolean; status: number; data: any }>
-) {
+async function withRefresh(tokensIn, res, req, call) {
   let tokens = tokensIn;
   let out = await call(tokens.access_token);
   if (out.ok || out.status !== 401) return { tokens, ...out };
@@ -112,10 +55,9 @@ async function withRefresh(
   return { tokens, ...out };
 }
 
-// ---- Drive
-async function driveSearch(accessToken: string, q: string, fields: string, pageSize = 50) {
-  const url =
-    'https://www.googleapis.com/drive/v3/files'
+// ---- Drive helpers
+async function driveSearch(accessToken, q, fields, pageSize = 50) {
+  const url = 'https://www.googleapis.com/drive/v3/files'
     + `?q=${encodeURIComponent(q)}`
     + `&spaces=drive&fields=${encodeURIComponent(fields)}`
     + `&pageSize=${pageSize}&includeItemsFromAllDrives=false&supportsAllDrives=false`;
@@ -123,15 +65,49 @@ async function driveSearch(accessToken: string, q: string, fields: string, pageS
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
+async function resolveFolderId(tokens, req, res, folderName) {
+  if (!folderName) return undefined;
+  const qFolder = [
+    "mimeType = 'application/vnd.google-apps.folder'",
+    `name contains '${folderName.replace(/'/g, "\\'")}'`,
+    "trashed = false",
+  ].join(' and ');
+  const r = await withRefresh(tokens, res, req, t => driveSearch(t, qFolder, "files(id,name,modifiedTime)"));
+  if (!r.ok) throw { status: r.status, body: { error: 'Drive folder search failed', details: r.data } };
+  const folders = r.data.files || [];
+  if (!folders.length) return undefined;
+  folders.sort((a,b) =>
+    (a.name === folderName ? -1 : b.name === folderName ? 1 : 0) ||
+    (b.modifiedTime || '').localeCompare(a.modifiedTime || '')
+  );
+  return folders[0].id;
+}
+async function resolveFileByName(tokens, req, res, args) {
+  const parent = args.folderId ? `'${args.folderId}' in parents and ` : '';
+  const q = [
+    parent + `mimeType = '${args.mimeType}'`,
+    `name contains '${args.name.replace(/'/g, "\\'")}'`,
+    "trashed = false",
+  ].join(' and ');
+  const r = await withRefresh(tokens, res, req, t => driveSearch(t, q, "files(id,name,modifiedTime,owners/displayName)"));
+  if (!r.ok) throw { status: r.status, body: { error: 'Drive file search failed', details: r.data } };
+  const files = r.data.files || [];
+  if (!files.length) return null;
+  files.sort((a,b) =>
+    (a.name === args.name ? -1 : b.name === args.name ? 1 : 0) ||
+    (b.modifiedTime || '').localeCompare(a.modifiedTime || '')
+  );
+  return files[0];
+}
 
-// ---- Sheets
-async function sheetsRead(accessToken: string, spreadsheetId: string, range: string) {
+// ---- Sheets helpers
+async function sheetsRead(accessToken, spreadsheetId, range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
-async function sheetsAppend(accessToken: string, spreadsheetId: string, range: string, values: any[][]) {
+async function sheetsAppend(accessToken, spreadsheetId, range, values) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
   const r = await fetch(url, {
     method: 'POST',
@@ -141,7 +117,7 @@ async function sheetsAppend(accessToken: string, spreadsheetId: string, range: s
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
-async function sheetsUpdateCell(accessToken: string, spreadsheetId: string, range: string, value: any) {
+async function sheetsUpdateCell(accessToken, spreadsheetId, range, value) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
   const r = await fetch(url, {
     method: 'PUT',
@@ -152,8 +128,8 @@ async function sheetsUpdateCell(accessToken: string, spreadsheetId: string, rang
   return { ok: r.ok, status: r.status, data };
 }
 
-// ---- Docs
-async function docsBatchUpdate(accessToken: string, docId: string, requests: any[]) {
+// ---- Docs helpers
+async function docsBatchUpdate(accessToken, docId, requests) {
   const url = `https://docs.googleapis.com/v1/documents/${encodeURIComponent(docId)}:batchUpdate`;
   const r = await fetch(url, {
     method: 'POST',
@@ -163,9 +139,9 @@ async function docsBatchUpdate(accessToken: string, docId: string, requests: any
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
-async function driveCreateDoc(accessToken: string, name: string, parentFolderId?: string) {
+async function driveCreateDoc(accessToken, name, parentFolderId) {
   const url = 'https://www.googleapis.com/drive/v3/files';
-  const metadata: any = { name, mimeType: 'application/vnd.google-apps.document' };
+  const metadata = { name, mimeType: 'application/vnd.google-apps.document' };
   if (parentFolderId) metadata.parents = [parentFolderId];
   const r = await fetch(url, {
     method: 'POST',
@@ -176,51 +152,8 @@ async function driveCreateDoc(accessToken: string, name: string, parentFolderId?
   return { ok: r.ok, status: r.status, data };
 }
 
-// ---------- resolution helpers ----------
-async function resolveFolderId(tokens: GTokens, req: VercelRequest, res: VercelResponse, folderName?: string) {
-  if (!folderName) return undefined as string | undefined;
-  const qFolder = [
-    "mimeType = 'application/vnd.google-apps.folder'",
-    `name contains '${folderName.replace(/'/g, "\\'")}'`,
-    "trashed = false",
-  ].join(' and ');
-  const r = await withRefresh(tokens, res, req, t => driveSearch(t, qFolder, "files(id,name,modifiedTime)"));
-  if (!r.ok) throw { status: r.status, body: { error: 'Drive folder search failed', details: r.data } };
-  const folders: any[] = r.data.files || [];
-  if (!folders.length) return undefined;
-  folders.sort((a,b) =>
-    (a.name === folderName ? -1 : b.name === folderName ? 1 : 0) ||
-    (b.modifiedTime || '').localeCompare(a.modifiedTime || '')
-  );
-  return folders[0].id as string;
-}
-
-async function resolveFileByName(tokens: GTokens, req: VercelRequest, res: VercelResponse, args: {
-  name: string,
-  mimeType: string,
-  folderId?: string
-}) {
-  const parent = args.folderId ? `'${args.folderId}' in parents and ` : '';
-  const q = [
-    parent + `mimeType = '${args.mimeType}'`,
-    `name contains '${args.name.replace(/'/g, "\\'")}'`,
-    "trashed = false",
-  ].join(' and ');
-  const r = await withRefresh(tokens, res, req, t =>
-    driveSearch(t, q, "files(id,name,modifiedTime,owners/displayName)")
-  );
-  if (!r.ok) throw { status: r.status, body: { error: 'Drive file search failed', details: r.data } };
-  const files: any[] = r.data.files || [];
-  if (!files.length) return null;
-  files.sort((a,b) =>
-    (a.name === args.name ? -1 : b.name === args.name ? 1 : 0) ||
-    (b.modifiedTime || '').localeCompare(a.modifiedTime || '')
-  );
-  return files[0] as { id: string, name: string };
-}
-
-// ---------- action handlers ----------
-async function actDriveSearch(req: VercelRequest, res: VercelResponse, tokens: GTokens) {
+// ---- action handlers
+async function actDriveSearch(req, res, tokens) {
   const b = parseBody(req);
   const name = (b.name || '').toString();
   const mimeType = (b.mimeType || '').toString();
@@ -228,7 +161,7 @@ async function actDriveSearch(req: VercelRequest, res: VercelResponse, tokens: G
   const pageSize = Math.max(1, Math.min(Number(b.pageSize || 50), 200));
 
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  const filters: string[] = ["trashed = false"];
+  const filters = ["trashed = false"];
   if (mimeType) filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
   if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
   if (folderId) filters.unshift(`'${folderId}' in parents`);
@@ -240,8 +173,7 @@ async function actDriveSearch(req: VercelRequest, res: VercelResponse, tokens: G
   if (!out.ok) return json(res, out.status, { error: 'Drive search failed', details: out.data });
   return json(res, 200, { ok: true, query: q, files: out.data.files || [] });
 }
-
-async function actDocsCreateAppend(req: VercelRequest, res: VercelResponse, tokens: GTokens) {
+async function actDocsCreateAppend(req, res, tokens) {
   const b = parseBody(req);
   const docName = (b.docName || '').toString().trim();
   const folderName = (b.folderName || '').toString().trim();
@@ -250,8 +182,6 @@ async function actDocsCreateAppend(req: VercelRequest, res: VercelResponse, toke
   if (!text) return json(res, 400, { error: 'text is required' });
 
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-
-  // find doc or create it
   let file = await resolveFileByName(tokens, req, res, {
     name: docName, mimeType: 'application/vnd.google-apps.document', folderId
   });
@@ -263,16 +193,14 @@ async function actDocsCreateAppend(req: VercelRequest, res: VercelResponse, toke
   }
 
   const append = await withRefresh(tokens, res, req, t =>
-    docsBatchUpdate(t, file!.id, [
+    docsBatchUpdate(t, file.id, [
       { insertText: { endOfSegmentLocation: {}, text: text.endsWith('\n') ? text : text + '\n' } }
     ])
   );
   if (!append.ok) return json(res, append.status, { error: 'Doc append failed', details: append.data });
-
   return json(res, 200, { ok: true, doc: file });
 }
-
-async function actSheetsRead(req: VercelRequest, res: VercelResponse, tokens: GTokens) {
+async function actSheetsRead(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
   const folderName = (b.folderName || '').toString().trim();
@@ -291,8 +219,7 @@ async function actSheetsRead(req: VercelRequest, res: VercelResponse, tokens: GT
   if (!r.ok) return json(res, r.status, { error: 'Sheets read failed', details: r.data });
   return json(res, 200, { ok: true, file, range: r.data.range, values: r.data.values || [] });
 }
-
-async function actSheetsAppendRow(req: VercelRequest, res: VercelResponse, tokens: GTokens) {
+async function actSheetsAppendRow(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
   const folderName = (b.folderName || '').toString().trim();
@@ -312,13 +239,12 @@ async function actSheetsAppendRow(req: VercelRequest, res: VercelResponse, token
   if (!r.ok) return json(res, r.status, { error: 'Sheets append failed', details: r.data });
   return json(res, 200, { ok: true, file, updatedRange: r.data.updates?.updatedRange });
 }
-
-async function actSheetsUpdateCell(req: VercelRequest, res: VercelResponse, tokens: GTokens) {
+async function actSheetsUpdateCell(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
   const folderName = (b.folderName || '').toString().trim();
   const tab = (b.tab || 'Sheet1').toString().trim();
-  const cell = (b.cell || '').toString().trim(); // e.g. "C7"
+  const cell = (b.cell || '').toString().trim();
   const value = b.value;
   if (!fileName) return json(res, 400, { error: 'fileName is required' });
   if (!cell) return json(res, 400, { error: 'cell (A1 notation) is required' });
@@ -335,9 +261,7 @@ async function actSheetsUpdateCell(req: VercelRequest, res: VercelResponse, toke
   return json(res, 200, { ok: true, file, updatedRange: r.data.updatedRange || range });
 }
 
-// ---------- main handler ----------
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Minimal CORS for same-origin app + potential previews
+export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -350,7 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return json(res, 401, { error: 'Missing Google auth. Visit /api/google?op=start first.' });
   }
 
-  const action = ((req.query.action as string) || '').toLowerCase();
+  const action = ((req.query.action || '') + '').toLowerCase();
 
   try {
     if (action === 'drive.search')      return await actDriveSearch(req, res, tokens);
@@ -363,9 +287,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: 'Unknown or missing action.',
       allowed: ['drive.search','docs.createAppend','sheets.read','sheets.appendRow','sheets.updateCell']
     });
-  } catch (e: any) {
+  } catch (e) {
     if (e?.status && e?.body) return json(res, e.status, e.body);
     return json(res, 500, { error: 'Workspace handler error', details: String(e?.message || e) });
   }
 }
-
