@@ -1,4 +1,4 @@
-// api/google.js
+// Single endpoint: /api/google?op=start | op=callback
 const SCOPES = [
   'https://www.googleapis.com/auth/drive.metadata.readonly',
   'https://www.googleapis.com/auth/drive.file',
@@ -16,7 +16,7 @@ function isLocalHost(host) {
 }
 
 export default async function handler(req, res) {
-  const op = (req.query?.op || req.query?.action || '').toString();
+  const op = (req.query?.op || '').toString();
 
   if (op === 'start') {
     const host = req.headers.host || '';
@@ -33,6 +33,7 @@ export default async function handler(req, res) {
       redirect_uri: redirectUri,
       response_type: 'code',
       access_type: 'offline',
+      include_granted_scopes: 'true',
       prompt: 'consent',
       scope: SCOPES,
     });
@@ -67,10 +68,19 @@ export default async function handler(req, res) {
     const tokens = await tokenResp.json();
     if (!tokenResp.ok) return res.status(400).json(tokens);
 
-    const cookie = `gTokens=${encodeURIComponent(JSON.stringify(tokens))}; HttpOnly; Path=/; Secure; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`;
+    const cookie = `gTokens=${encodeURIComponent(JSON.stringify({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      scope: tokens.scope,
+      token_type: tokens.token_type || 'Bearer',
+      expiry_date: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+      id_token: tokens.id_token,
+    }))}; HttpOnly; Path=/; SameSite=Lax; Secure; Max-Age=${60 * 60 * 24 * 30}`;
+
     res.setHeader('Set-Cookie', cookie);
-    return res.status(302).setHeader('Location', '/connected.html').end();
+    const backTo = isLocalHost(host) ? '/' : (process.env.POST_OAUTH_RETURN_PATH || '/index.html');
+    return res.status(302).setHeader('Location', backTo).end();
   }
 
-  return res.status(400).send('Missing or unknown ?op=start|callback');
+  return res.status(400).send('Unknown op. Use ?op=start or ?op=callback.');
 }
