@@ -1,3 +1,5 @@
+// api/realtime/offer.js
+
 const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview';
 const MAIN_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 
@@ -9,51 +11,79 @@ function isAllowedOrigin(origin) {
   return false;
 }
 
+// Minimal CORS/preflight to avoid odd 404s if you ever test cross-origin
+function handleOptions(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.statusCode = 204;
+  res.end();
+}
+
 async function readRawText(req) {
   if (typeof req.body === 'string') return req.body;
   if (Buffer.isBuffer(req.body)) return req.body.toString('utf8');
   return await new Promise((resolve, reject) => {
     let data = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => (data += c));
+    req.on('data', (chunk) => (data += chunk));
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
 }
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  if (req.method === 'OPTIONS') return handleOptions(req, res);
+  if (req.method !== 'POST') {
+    res.statusCode = 405;
+    return res.end('Method Not Allowed');
+  }
 
   const origin = req.headers.origin || '';
-  if (!isAllowedOrigin(origin)) return res.status(403).send('Forbidden (origin)');
+  if (!isAllowedOrigin(origin)) {
+    res.statusCode = 403;
+    return res.end('Forbidden (origin)');
+  }
 
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return res.status(500).send('Missing OPENAI_API_KEY');
+  if (!apiKey) {
+    res.statusCode = 500;
+    return res.end('Missing OPENAI_API_KEY');
+  }
 
   const ct = req.headers['content-type'] || '';
-  if (!ct.includes('application/sdp')) return res.status(400).send('Expected application/sdp');
+  if (!ct.includes('application/sdp')) {
+    res.statusCode = 400;
+    return res.end('Expected application/sdp');
+  }
 
   try {
     let sdpOffer = await readRawText(req);
-    sdpOffer = sdpOffer.replace(/\r?\n/g, '\r\n');
+    sdpOffer = sdpOffer.replace(/\r?\n/g, '\r\n'); // normalize CRLF for SDP
 
-    const oaRes = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`, {
+    const upstream = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(MODEL)}`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/sdp',
-        Accept: 'application/sdp',
-        'OpenAI-Beta': 'realtime=v1',
+        'Accept': 'application/sdp',
+        'OpenAI-Beta': 'realtime=v1'
       },
-      body: sdpOffer,
+      body: sdpOffer
     });
 
-    const text = await oaRes.text();
-    if (!oaRes.ok) return res.status(oaRes.status).send(`OpenAI Realtime error: ${text}`);
+    const text = await upstream.text();
+
+    if (!upstream.ok) {
+      res.statusCode = upstream.status;
+      return res.end(`OpenAI Realtime error: ${text}`);
+    }
 
     res.setHeader('Content-Type', 'application/sdp');
-    return res.status(200).send(text);
+    res.statusCode = 200;
+    return res.end(text);
   } catch (e) {
-    return res.status(500).send(`Proxy error: ${e?.message || 'unknown error'}`);
+    res.statusCode = 500;
+    return res.end(`Proxy error: ${e?.message || 'unknown error'}`);
   }
 }
