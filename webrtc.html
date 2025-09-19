@@ -105,8 +105,8 @@
         log('[CHK] has direction (send/recv):', /a=(sendrecv|sendonly|recvonly)/.test(audioSection));
 
         // 7) Send offer to your proxy -> OpenAI
-        log('[RT] posting offer to https://va-button-test01.vercel.app//api/realtime/offer');
-        const res = await fetch('https://va-button-test01.vercel.app//api/realtime/offer', {
+        log('[RT] posting offer to /api/realtime/offer');
+        const res = await fetch('/api/realtime/offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
           body: offer.sdp
@@ -139,3 +139,17 @@
       audioEl.srcObject = null;
       log('[RT] stopped');
     }
+
+    let live = false;
+    btn.addEventListener('click', async ()=>{
+      btn.disabled = true;
+      try {
+        if (!live) { btn.textContent = 'Connecting…'; await startRealtime(); live = true; btn.textContent = 'Stop'; }
+        else { stopRealtime(); live = false; btn.textContent = 'Start'; }
+      } catch {
+        stopRealtime(); live = false; btn.textContent = 'Start';
+      } finally { btn.disabled = false; }
+    });
+  </script>
+</body>
+</html>
