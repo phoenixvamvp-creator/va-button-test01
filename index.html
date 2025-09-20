@@ -1,22 +1,275 @@
-dc = pc.createDataChannel('oai-events');
-dc.onopen = () => {
-  log('[DC] open');
-  try {
-    dc.send(JSON.stringify({
-      type: 'session.update',
-      session: {
-        voice: 'cedar',                          // 👈 voice fixed
-        instructions: 'Respond in English only. Warm, concise, friendly tone.' // 👈 English explicit
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phoenix VA — Realtime</title>
+  <meta name="color-scheme" content="light dark" />
+  <style>
+    :root {
+      --navy: #0B1B34;
+      --card: #0F223F;
+      --text: #E8EEF9;
+      --muted: #9FB1D1;
+      --accent: #FFFFFF;
+      --btn-bg: #001F3F;
+      --btn-tx: #FFFFFF;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+      background: var(--navy);
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      min-height: 100svh;
+    }
+    .wrap { width: 100%; max-width: 720px; padding: 20px; display: grid; gap: 16px; }
+    .brand { display: grid; place-items: center; gap: 10px; text-align: center; }
+    .brand img {
+      width: 96px; height: auto; display: block;
+      filter: drop-shadow(0 6px 18px rgba(0,0,0,.25));
+      user-select: none;
+    }
+    .brand h1 { margin: 0; font-size: 18px; font-weight: 600; color: var(--muted); letter-spacing: .3px; }
+    .card {
+      background: color-mix(in oklab, var(--card) 90%, black 10%);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 12px 30px rgba(0,0,0,.25);
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+    button, .btn {
+      appearance: none; border: none; background: #F4F6FC; color: #0B1B34;
+      padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor: pointer;
+      transition: transform .04s ease, opacity .2s ease, background .2s ease;
+    }
+    button:active { transform: translateY(1px); }
+    button[disabled] { opacity: .6; cursor: not-allowed; }
+
+    #voiceToggle {
+      background: var(--btn-bg); color: var(--btn-tx);
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 12px 18px; border-radius: 16px;
+    }
+    #voiceToggle img {
+      width: 28px; height: 28px; object-fit: contain; display: block;
+      pointer-events: none; user-select: none;
+    }
+    #voiceToggle:hover { background: #003366; }
+
+    .btn-outline { background: transparent; color: var(--accent); border: 1px solid rgba(255,255,255,.2); }
+    input[type="text"] {
+      flex: 1 1 220px; background: rgba(255,255,255,.06); color: var(--text);
+      border: 1px solid rgba(255,255,255,.15); border-radius: 10px; padding: 10px 12px; outline: none;
+    }
+    input::placeholder { color: rgba(255,255,255,.5); }
+    #log {
+      white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px; line-height: 1.4; color: #CFE2FF; max-height: 280px; overflow: auto;
+      background: rgba(0,0,0,.25); border-radius: 10px; padding: 12px; border: 1px solid rgba(255,255,255,.08);
+    }
+    .hint { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <img src="/logo.png" alt="Phoenix VA Logo" />
+      <h1>Phoenix VA — Realtime</h1>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <button id="voiceToggle">
+            <img src="/logo.png" alt="Phoenix VA Logo" width="56" height="56" />
+            <span id="voiceLabel">Start</span>
+          </button>
+
+          <button id="googleConnect" class="btn-outline" title="Connect Google">Connect Google</button>
+        </div>
+        <span class="hint" id="status">idle</span>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <input id="textInput" type="text" placeholder="Ask me anything">
+        <button id="sendText">Send</button>
+      </div>
+
+      <audio id="assistantAudio" autoplay playsinline style="display:none"></audio>
+      <div id="log" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    const btn = document.getElementById('voiceToggle');
+    const btnLabel = document.getElementById('voiceLabel');
+    const btnGoogle = document.getElementById('googleConnect');
+    const inputEl = document.getElementById('textInput');
+    const sendBtn = document.getElementById('sendText');
+    const audioEl = document.getElementById('assistantAudio');
+
+    const log = (...a) => {
+      const s = a.map(x => typeof x === 'string' ? x : JSON.stringify(x, null, 2)).join(' ');
+      logEl.textContent += s + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(...a);
+    };
+    const setStatus = (s) => { statusEl.textContent = s; };
+
+    let pc = null, mic = null, dc = null, live = false;
+
+    // Google connect
+    btnGoogle.addEventListener('click', () => {
+      window.location.href = '/api/google.js?op=start';
+    });
+
+    // Text -> speak back
+    sendBtn.addEventListener('click', () => {
+      const text = (inputEl.value || '').trim();
+      if (!text) return;
+      if (!dc || dc.readyState !== 'open') {
+        log('[WARN] DataChannel not open yet; cannot send text.');
+        return;
       }
-    }));
-    // Optional: give a greeting on connect
-    dc.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        instructions: 'Hello! I will respond in English using the cedar voice.'
+      try {
+        dc.send(JSON.stringify({
+          type: 'response.create',
+          response: { instructions: text }
+        }));
+        log('[TX] text prompt → response.create');
+      } catch (e) {
+        log('[ERR] send text:', e?.message || e);
       }
-    }));
-  } catch (e) {
-    log('[DC] session.update error:', e?.message || e);
-  }
-};
+    });
+
+    async function startRealtime() {
+      try {
+        setStatus('requesting mic…');
+
+        try {
+          if ('permissions' in navigator && navigator.permissions?.query) {
+            const p = await navigator.permissions.query({ name: 'microphone' });
+            log('[PERM] microphone:', p.state);
+          }
+        } catch {}
+
+        // mic
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic = stream;
+        const micTrack = mic.getTracks()[0];
+
+        // pc
+        pc = new RTCPeerConnection();
+        pc.oniceconnectionstatechange = () => log('ICE:', pc.iceConnectionState);
+        pc.onconnectionstatechange = () => log('PC:', pc.connectionState);
+        pc.ontrack = (e) => {
+          log('[RT] ontrack: remote audio');
+          audioEl.srcObject = e.streams[0];
+          audioEl.play().catch(err => log('[AUDIO] play blocked:', err?.message || err));
+        };
+
+        // audio transceiver
+        const tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
+        try { await tx.sender.replaceTrack(micTrack); } catch {}
+        if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
+
+        // data channel -> session settings
+        dc = pc.createDataChannel('oai-events');
+        dc.onopen = () => {
+          log('[DC] open');
+          try {
+            // Set voice + language for the session
+            dc.send(JSON.stringify({
+              type: 'session.update',
+              session: {
+                voice: 'cedar',
+                instructions: 'Respond in English only. Warm, concise, friendly tone.'
+              }
+            }));
+            // Optional greeting so you hear confirmation
+            dc.send(JSON.stringify({
+              type: 'response.create',
+              response: { instructions: 'Hello! I will respond in English using the cedar voice.' }
+            }));
+          } catch (e) {
+            log('[DC] session.update error:', e?.message || e);
+          }
+        };
+        dc.onmessage = (evt) => {
+          try { log('[EVT]', (JSON.parse(evt.data)).type || 'message', JSON.parse(evt.data)); }
+          catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); }
+        };
+        dc.onerror = (e) => log('[DC] error', e);
+        dc.onclose = () => log('[DC] closed');
+
+        setStatus('creating offer…');
+        const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
+        await pc.setLocalDescription(offer);
+
+        const res = await fetch('/api/realtime/offer.js', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
+          credentials: 'include'
+        });
+        const answer = await res.text();
+        log('[HTTP] /api/realtime/offer →', res.status);
+        if (!res.ok) {
+          try { log('[ERR]', JSON.parse(answer)); } catch { log('[ERR]', answer); }
+          throw new Error('Offer→Answer failed');
+        }
+
+        await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        setStatus('connected');
+        log('[RT] connected; speak to the assistant…');
+      } catch (e) {
+        setStatus('error');
+        log('[EXC] startRealtime:', e?.message || e);
+        throw e;
+      }
+    }
+
+    function stopRealtime() {
+      try { pc?.getSenders().forEach(s => s.track?.stop()); pc?.close(); } catch {}
+      try { mic?.getTracks().forEach(t => t.stop()); } catch {}
+      pc = null; mic = null; dc = null; audioEl.srcObject = null;
+      setStatus('idle');
+      log('[RT] stopped');
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        if (!live) {
+          btnLabel.textContent = 'Connecting…';
+          await startRealtime();
+          live = true;
+          btnLabel.textContent = 'Stop';
+        } else {
+          stopRealtime();
+          live = false;
+          btnLabel.textContent = 'Start';
+        }
+      } catch {
+        stopRealtime();
+        live = false;
+        btnLabel.textContent = 'Start';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
+    });
+  </script>
+</body>
+</html>
