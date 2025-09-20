@@ -3,6 +3,7 @@
     { "src": "index.html", "use": "@vercel/static" },
     { "src": "webrtc.html", "use": "@vercel/static" },
     { "src": "connected.html", "use": "@vercel/static" },
+    { "src": "public/**/*", "use": "@vercel/static" },
 
     { "src": "api/**/*.js", "use": "@vercel/node" },
     { "src": "api/**/*.ts", "use": "@vercel/node" }
