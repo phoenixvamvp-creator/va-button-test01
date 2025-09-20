@@ -3,18 +3,14 @@
     { "src": "index.html", "use": "@vercel/static" },
     { "src": "webrtc.html", "use": "@vercel/static" },
     { "src": "connected.html", "use": "@vercel/static" },
-    { "src": "public/**/*", "use": "@vercel/static" },
 
-    { "src": "api/*.*", "use": "@vercel/node" },
-    { "src": "api/**/*.*", "use": "@vercel/node" }
+    { "src": "api/**/*.js", "use": "@vercel/node" },
+    { "src": "api/**/*.ts", "use": "@vercel/node" }
   ],
   "routes": [
     { "src": "^/$", "dest": "/index.html" },
-    { "src": "^/webrtc$", "dest": "/webrtc.html" },
-    { "src": "^/connected$", "dest": "/connected.html" },
+    { "src": "^/(webrtc|connected)$", "dest": "/$1.html" },
 
-    { "src": "^/api/(.*)$", "dest": "/api/$1" },
-
-    { "src": "^(?!/api/)(.*)$", "dest": "/public/$1" }
+    { "src": "^/api/(.*)$", "dest": "/api/$1" }
   ]
 }
