@@ -106,7 +106,7 @@
 
         // 7) Send offer to your proxy -> OpenAI
         log('[RT] posting offer to /api/realtime/offer');
-        const res = await fetch('/api/realtime/offer', {
+        const res = await fetch('/api/realtime/offer.js', {
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
           body: offer.sdp
