@@ -115,10 +115,10 @@
     const inputEl = document.getElementById('textInput');
     const sendBtn = document.getElementById('sendText');
     const setSendReady = (ready) => {
-  sendBtn.disabled = !ready;
-  inputEl.disabled = !ready;
+  sendBtn.disabled = !ready;      // only lock the Send button
+  // keep input enabled so you can type anytime
 };
-setSendReady(false); // locked until data channel opens
+setSendReady(false); // Send locked until data channel opens
 
     const audioEl = document.getElementById('assistantAudio');
 
@@ -282,8 +282,11 @@ setSendReady(false); // locked until data channel opens
     });
 
     inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); sendBtn.click(); }
-    });
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (!sendBtn.disabled) sendBtn.click(); // only send when channel is ready
+  }
+});
   </script>
 </body>
 </html>
