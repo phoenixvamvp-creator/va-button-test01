@@ -114,6 +114,12 @@
     const btnGoogle = document.getElementById('googleConnect');
     const inputEl = document.getElementById('textInput');
     const sendBtn = document.getElementById('sendText');
+    const setSendReady = (ready) => {
+  sendBtn.disabled = !ready;
+  inputEl.disabled = !ready;
+};
+setSendReady(false); // locked until data channel opens
+
     const audioEl = document.getElementById('assistantAudio');
 
     const log = (...a) => {
@@ -185,6 +191,8 @@
         dc = pc.createDataChannel('oai-events');
         dc.onopen = () => {
           log('[DC] open');
+          setSendReady(true);
+          setStatus('ready');
           try {
             // Set voice + language for the session
             dc.send(JSON.stringify({
@@ -208,7 +216,12 @@
           catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); }
         };
         dc.onerror = (e) => log('[DC] error', e);
-        dc.onclose = () => log('[DC] closed');
+        dc.onclose = () => {
+          log('[DC] closed');
+          setSendReady(false);
+          setStatus('disconnected');
+        };
+
 
         setStatus('creating offer…');
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
@@ -228,7 +241,7 @@
         }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answer });
-        setStatus('connected');
+        setStatus('connected — waiting for channel…');
         log('[RT] connected; speak to the assistant…');
       } catch (e) {
         setStatus('error');
@@ -241,6 +254,7 @@
       try { pc?.getSenders().forEach(s => s.track?.stop()); pc?.close(); } catch {}
       try { mic?.getTracks().forEach(t => t.stop()); } catch {}
       pc = null; mic = null; dc = null; audioEl.srcObject = null;
+      setSendReady(false);
       setStatus('idle');
       log('[RT] stopped');
     }
