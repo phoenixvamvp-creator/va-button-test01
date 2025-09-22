@@ -274,7 +274,15 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'Missing Google auth. Visit /api/google?op=start first.' });
   }
 
-  const action = ((req.query.action || '') + '').toLowerCase();
+  // accept both ?action= and legacy ?op=, and map old names to current ones
+const raw = ((req.query.action || req.query.op || '') + '').toLowerCase();
+const alias = {
+  'read_by_search': 'sheets.read',
+  'append': 'sheets.appendrow',
+  'doc_append': 'docs.createappend'
+};
+const action = alias[raw] || raw;
+
 
   try {
     if (action === 'drive.search')      return await actDriveSearch(req, res, tokens);
