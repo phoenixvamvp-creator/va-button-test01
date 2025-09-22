@@ -271,7 +271,7 @@ export default async function handler(req, res) {
 
   const tokens = getTokensFromCookie(req);
   if (!tokens?.access_token) {
-    return json(res, 401, { error: 'Missing Google auth. Visit /api/google?op=start first.' });
+    return json(res, 401, { error: 'Missing Google auth. Visit /api/google.js?op=start first.' });
   }
 
   // accept both ?action= and legacy ?op=, and map old names to current ones
