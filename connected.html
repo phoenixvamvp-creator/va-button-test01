@@ -195,7 +195,7 @@ const res = await postJSON('/api/workspace.js?action=sheets.appendrow', payload)
         text: fd.get('text') || ''
       };
       out.textContent = 'Appending to Doc…';
-      const res = await postJSON('/api/workspace?action=doc_append', payload);
+      const res = await postJSON('/api/workspace.js?action=docs.createappend', payload);
       out.textContent = pretty(res);
     });
   </script>
