@@ -160,7 +160,7 @@
         range: fd.get('range') || ''
       };
       out.textContent = 'Requesting…';
-      const res = await postJSON('/api/workspace?action=read_by_search', payload);
+      const res = await postJSON('/api/workspace.js?action=sheets.read', payload);
       out.textContent = pretty(res);
     });
 
