@@ -196,12 +196,50 @@ setSendReady(false); // Send locked until data channel opens
           try {
             // Set voice + language for the session
             dc.send(JSON.stringify({
-              type: 'session.update',
-              session: {
-                voice: 'cedar',
-                instructions: 'Respond in English only. Warm, concise, friendly tone.'
-              }
-            }));
+  type: 'session.update',
+  session: {
+    voice: 'cedar',
+    instructions:
+      'You can use tools to work with the user’s Google Sheets. ' +
+      'Use sheets_read to read a range; use sheets_updatecell to change a single cell. ' +
+      'Prefer tools over free-text when the user asks to read or edit a sheet.',
+
+    tools: [
+      {
+        type: 'function',
+        name: 'sheets_read',
+        description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fileName: { type: 'string', description: 'Exact sheet name' },
+            folderName: { type: 'string', description: 'Optional parent folder name' },
+            tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
+            range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
+          },
+          required: ['fileName']
+        }
+      },
+      {
+        type: 'function',
+        name: 'sheets_updatecell',
+        description: 'Update a single cell in a Google Sheet.',
+        parameters: {
+          type: 'object',
+          properties: {
+            fileName: { type: 'string' },
+            folderName: { type: 'string' },
+            tab: { type: 'string', description: 'Default Sheet1' },
+            cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+            value: { }
+          },
+          required: ['fileName','cell','value']
+                  }
+                }
+              ]
+            }
+          }));
+
             // Optional greeting so you hear confirmation
             dc.send(JSON.stringify({
               type: 'response.create',
