@@ -175,13 +175,13 @@
         catch { return out.textContent = 'Row must be valid JSON array, e.g. ["2025-09-14","note"]'; }
       }
       const payload = {
-        fileName: fd.get('fileName') || '',
-        folderName: fd.get('folderName') || '',
-        tab: fd.get('tab') || 'Sheet1',
-        row
-      };
-      out.textContent = 'Appending…';
-      const res = await postJSON('/api/workspace?action=append', payload);
+  fileName: fd.get('fileName') || '',
+  folderName: fd.get('folderName') || '',
+  tab: fd.get('tab') || 'Sheet1',
+  values: row   // backend expects 'values' (array), not 'row'
+};
+out.textContent = 'Appending…';
+const res = await postJSON('/api/workspace.js?action=sheets.appendrow', payload);
       out.textContent = pretty(res);
     });
 
