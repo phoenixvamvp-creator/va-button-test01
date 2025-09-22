@@ -132,6 +132,66 @@ setSendReady(false); // Send locked until data channel opens
 
     let pc = null, mic = null, dc = null, live = false;
 
+    // Buffer for streaming tool-call args
+const toolArgBuf = Object.create(null);
+
+// Run the right backend action and send the result back to the model
+async function handleToolCall(name, args, callId) {
+  try {
+    let url = '', body = {};
+
+    if (name === 'sheets_read') {
+      url = '/api/workspace.js?action=sheets.read';
+      body = {
+        fileName: args.fileName || '',
+        folderName: args.folderName || '',
+        tab: args.tab || 'Sheet1',
+        range: args.range || 'A:Z'
+      };
+    } else if (name === 'sheets_updatecell') {
+      url = '/api/workspace.js?action=sheets.updatecell';
+      body = {
+        fileName: args.fileName || '',
+        folderName: args.folderName || '',
+        tab: args.tab || 'Sheet1',
+        cell: args.cell || '',
+        value: args.value
+      };
+    } else if (name === 'drive_search') {
+      url = '/api/workspace.js?action=drive.search';
+      body = {
+        mimeType: args.mimeType || '',
+        name: args.name || '',
+        folderName: args.folderName || '',
+        pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
+      };
+    } else {
+      const out = { error: `Unsupported tool: ${name}` };
+      dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+      dc.send(JSON.stringify({ type: 'response.create' }));
+      return;
+    }
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+    const text = await r.text();
+    log('[TOOL]', name, r.status, text.slice(0, 300));
+
+    // return result to model, then let it continue
+    dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
+    dc.send(JSON.stringify({ type: 'response.create' }));
+  } catch (e) {
+    const out = { error: String(e?.message || e) };
+    dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+    dc.send(JSON.stringify({ type: 'response.create' }));
+  }
+}
+
+
     // Google connect
     btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
@@ -253,9 +313,34 @@ setSendReady(false); // Send locked until data channel opens
           }
         };
         dc.onmessage = (evt) => {
-          try { log('[EVT]', (JSON.parse(evt.data)).type || 'message', JSON.parse(evt.data)); }
-          catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); }
-        };
+  let msg;
+  try { msg = JSON.parse(evt.data); }
+  catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
+
+  log('[EVT]', msg.type || 'message');
+
+  // Tool-call args stream in chunks
+  if (msg.type === 'response.function_call.arguments.delta') {
+    const id = msg.call_id || msg.id;
+    const frag = msg.delta ?? msg.arguments ?? '';
+    toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
+    return;
+  }
+
+  // Tool-call completion → run the tool
+  if (msg.type === 'response.function_call.completed') {
+    const id = msg.call_id || msg.id;
+    const name = msg.name;
+    const argsStr = toolArgBuf[id] || '{}';
+    delete toolArgBuf[id];
+
+    let args = {};
+    try { args = JSON.parse(argsStr); } catch {}
+    handleToolCall(name, args, id);
+    return;
+  }
+};
+
         dc.onerror = (e) => log('[DC] error', e);
         dc.onclose = () => {
           log('[DC] closed');
