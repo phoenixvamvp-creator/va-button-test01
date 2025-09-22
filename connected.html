@@ -108,7 +108,7 @@
       </details>
       <p class="hint">These forms POST to <code>/api/workspace</code> with <code>action=read_by_search | append | doc_append</code>. Requires the OAuth cookie <code>gTokens</code>.</p>
       <p class="hint">Prefer testing live in the browser console? See:
-        <code>fetch('/api/workspace?action=read_by_search',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({fileName:'Master Dataset',tab:'Sheet1',range:'A:Z'})})</code>
+        <code>fetch('/api/workspace.js?action=sheets.read',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({fileName:'Master Dataset',tab:'Sheet1',range:'A:Z'})})</code>
       </p>
     </section>
   </div>
