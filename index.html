@@ -328,20 +328,36 @@ dc.onopen = () => {
   }
 };
 
-        dc.onmessage = (evt) => {
+dc.onmessage = (evt) => {
   let msg;
   try { msg = JSON.parse(evt.data); }
   catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
 
   log('[EVT]', msg.type || 'message');
 
-  // Tool-call args stream in chunks
-  if (msg.type === 'response.function_call.arguments.delta') {
+  // Correct event name: response.function_call_arguments.delta
+  if (msg.type === 'response.function_call_arguments.delta') {
     const id = msg.call_id || msg.id;
     const frag = msg.delta ?? msg.arguments ?? '';
     toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
     return;
   }
+
+  // Correct event name: response.function_call_arguments.done
+  if (msg.type === 'response.function_call_arguments.done') {
+    const id = msg.call_id || msg.id;
+    const name = msg.name;
+    // Prefer the final arguments field; fall back to the buffer
+    const argsStr = (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
+    delete toolArgBuf[id];
+
+    let args = {};
+    try { args = JSON.parse(argsStr); } catch {}
+    handleToolCall(name, args, id);
+    return;
+  }
+};
+
 
   // Tool-call completion → run the tool
   if (msg.type === 'response.function_call.completed') {
