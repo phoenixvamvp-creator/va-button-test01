@@ -249,82 +249,85 @@ async function handleToolCall(name, args, callId) {
 
         // data channel -> session settings
         dc = pc.createDataChannel('oai-events');
-        dc.onopen = () => {
-          log('[DC] open');
-          setSendReady(true);
-          setStatus('ready');
-          try {
-            // Set voice + language for the session
-            dc.send(JSON.stringify({
-  type: 'session.update',
-  session: {
-    voice: 'cedar',
-    instructions:
-  'Your name is Nyx. Be friendly and helpful. Be accurate when responding with requests for information. When the user asks about Google Docs or Google Sheets, you MUST call the tools and wait for their results. ' +
-  'Never guess or describe file contents without a successful tool call. ' +
-  'If a tool fails or returns no data, say exactly what failed (e.g., missing file, wrong tab/range) and ask for the needed detail. ' +
-  'When you read a sheet, state the exact file name, tab, and range you used. When you edit a cell, state the file name, tab, and cell you changed. ' +
-  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
-
-
-tools: [
-  {
-    type: 'function',
-    name: 'sheets_read',
-    description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
-    parameters: {
-      type: 'object',
-      properties: {
-        fileName: { type: 'string', description: 'Exact sheet name' },
-        folderName: { type: 'string', description: 'Optional parent folder name' },
-        tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
-        range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
-      },
-      required: ['fileName']
-    }
-  },
-  {
-    type: 'function',
-    name: 'sheets_updatecell',
-    description: 'Update a single cell in a Google Sheet.',
-    parameters: {
-      type: 'object',
-      properties: {
-        fileName: { type: 'string' },
-        folderName: { type: 'string' },
-        tab: { type: 'string', description: 'Default Sheet1' },
-        cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-        value: {}
-      },
-      required: ['fileName', 'cell', 'value']
-    }
-  },
-  {
-    type: 'function',
-    name: 'drive_search',
-    description: 'List files/folders in Google Drive by optional mimeType/name/folderName.',
-    parameters: {
-      type: 'object',
-      properties: {
-        mimeType: { type: 'string' },
-        name: { type: 'string' },
-        folderName: { type: 'string' },
-        pageSize: { type: 'integer', minimum: 1, maximum: 200 }
-      }
-    }
-  }
-]
-
-
-            // Optional greeting so you hear confirmation
-            dc.send(JSON.stringify({
-              type: 'response.create',
-              response: { instructions: 'Hello! I will respond in English using the cedar voice.' }
-            }));
-          } catch (e) {
-            log('[DC] session.update error:', e?.message || e);
+dc.onopen = () => {
+  log('[DC] open');
+  setSendReady(true);
+  setStatus('ready');
+  try {
+    const sessionUpdate = {
+      type: 'session.update',
+      session: {
+        voice: 'cedar',
+        instructions:
+          'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
+          'When the user asks about Google Docs or Google Sheets, you MUST call the tools and wait for their results. ' +
+          'Never guess or describe file contents without a successful tool call. ' +
+          'If a tool fails or returns no data, say exactly what failed (e.g., missing file, wrong tab/range) and ask for the needed detail. ' +
+          'When you read a sheet, state the exact file name, tab, and range you used. ' +
+          'When you edit a cell, state the file name, tab, and cell you changed. ' +
+          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
+        tools: [
+          {
+            type: 'function',
+            name: 'sheets_read',
+            description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string', description: 'Exact sheet name' },
+                folderName: { type: 'string', description: 'Optional parent folder name' },
+                tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
+                range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
+              },
+              required: ['fileName']
+            }
+          },
+          {
+            type: 'function',
+            name: 'sheets_updatecell',
+            description: 'Update a single cell in a Google Sheet.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string' },
+                folderName: { type: 'string' },
+                tab: { type: 'string', description: 'Default Sheet1' },
+                cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+                value: {}
+              },
+              required: ['fileName', 'cell', 'value']
+            }
+          },
+          {
+            type: 'function',
+            name: 'drive_search',
+            description: 'List files/folders in Google Drive by optional mimeType/name/folderName.',
+            parameters: {
+              type: 'object',
+              properties: {
+                mimeType: { type: 'string' },
+                name: { type: 'string' },
+                folderName: { type: 'string' },
+                pageSize: { type: 'integer', minimum: 1, maximum: 200 }
+              }
+            }
           }
-        };
+        ]
+      }
+    };
+
+    dc.send(JSON.stringify(sessionUpdate));
+
+    // Optional audible confirmation
+    dc.send(JSON.stringify({
+      type: 'response.create',
+      response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' }
+    }));
+  } catch (e) {
+    log('[DC] session.update error:', e?.message || e);
+  }
+};
+
         dc.onmessage = (evt) => {
   let msg;
   try { msg = JSON.parse(evt.data); }
