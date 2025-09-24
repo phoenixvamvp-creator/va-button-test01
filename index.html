@@ -414,12 +414,35 @@ dc.onclose = () => {
       log('[RT] stopped');
     }
 
+    // --- Google auth helper: ping status (server will refresh if near-expiry)
+// If not connected or refresh failed, redirect to OAuth and bail out.
+async function ensureGoogleAuth() {
+  try {
+    const r = await fetch('/api/google.js?op=status', { credentials: 'include' });
+    const data = await r.json();
+    log('[AUTH]', data);
+    if (data.connected && !data.refresh_problem) return true;
+    setStatus('connecting Google…');
+    window.location.href = '/api/google.js?op=start';
+    return false; // redirecting
+  } catch (e) {
+    log('[AUTH] status error:', e?.message || e);
+    window.location.href = '/api/google.js?op=start';
+    return false;
+  }
+}
+
+    
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
         if (!live) {
           btnLabel.textContent = 'Connecting…';
-          await startRealtime();
+// 🔐 check Google tokens before starting RTC
+const ok = await ensureGoogleAuth();
+if (!ok) return; // will redirect to OAuth if expired/missing
+await startRealtime();
+
           live = true;
           btnLabel.textContent = 'Stop';
         } else {
