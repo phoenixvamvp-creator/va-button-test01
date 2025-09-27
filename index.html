@@ -140,7 +140,7 @@ async function handleToolCall(name, args, callId) {
   try {
     let url = '', body = {};
 
-    if (name === 'sheets_read') {
+        if (name === 'sheets.read') {
       url = '/api/workspace.js?action=sheets.read';
       body = {
         fileName: args.fileName || '',
@@ -148,7 +148,9 @@ async function handleToolCall(name, args, callId) {
         tab: args.tab || 'Sheet1',
         range: args.range || 'A:Z'
       };
-    } else if (name === 'sheets_updatecell') {
+    }
+
+    else if (name === 'sheets_updatecell') {
       url = '/api/workspace.js?action=sheets.updatecell';
       body = {
         fileName: args.fileName || '',
@@ -272,7 +274,7 @@ dc.onopen = () => {
         tools: [
           {
             type: 'function',
-            name: 'sheets_read',
+            name: 'sheets.read',
             description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
             parameters: {
               type: 'object',
