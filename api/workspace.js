@@ -161,11 +161,19 @@ async function actDriveSearch(req, res, tokens) {
   const pageSize = Math.max(1, Math.min(Number(b.pageSize || 50), 200));
 
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  const filters = ["trashed = false"];
-  if (mimeType) filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
-  if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
-  if (folderId) filters.unshift(`'${folderId}' in parents`);
-  const q = filters.join(' and ');
+const filters = ["trashed = false"];
+if (mimeType) filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
+if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
+
+if (folderId) {
+  filters.unshift(`'${folderId}' in parents`);
+} else {
+  // Default to top-level of My Drive when no folderName is provided
+  filters.unshift(`'root' in parents`);
+}
+
+const q = filters.join(' and ');
+
 
   const out = await withRefresh(tokens, res, req, t =>
     driveSearch(t, q, "files(id,name,mimeType,modifiedTime,owners/displayName)", pageSize)
