@@ -287,23 +287,21 @@ dc.onopen = () => {
             }
           },
           {
-  type: 'function',
-  name: 'sheets.updatecell',
-  description: 'Update a single cell in a Google Sheet.',
-  parameters: {
-    type: 'object',
-    properties: {
-      fileName: { type: 'string' },
-      folderName: { type: 'string' },
-      tab: { type: 'string', description: 'Default Sheet1' },
-      cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-      value: {}
-    },
-    required: ['fileName', 'cell', 'value']
-  }
-}
-
-          ,
+              type: 'function',
+              name: 'sheets.updatecell',
+              description: 'Update a single cell in a Google Sheet.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  fileName: { type: 'string' },
+                  folderName: { type: 'string' },
+                  tab: { type: 'string', description: 'Default Sheet1' },
+                  cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+                  value: {}
+                },
+                required: ['fileName', 'cell', 'value']
+              }
+            },
           {
             type: 'function',
             name: 'drive.search',
