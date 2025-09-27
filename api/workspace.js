@@ -1,4 +1,4 @@
-// Unified Drive + Sheets + Docs behind actions on POST /api/workspace?action=...
+// api/workspace.js — Drive + Sheets + Docs actions
 function json(res, status, body) {
   res.status(status).setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(body));
@@ -129,6 +129,25 @@ async function sheetsUpdateCell(accessToken, spreadsheetId, range, value) {
 }
 
 // ---- Docs helpers
+async function docsGet(accessToken, docId) {
+  const url = `https://docs.googleapis.com/v1/documents/${encodeURIComponent(docId)}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data };
+}
+function extractPlainTextFromDoc(doc) {
+  try {
+    const body = doc.body?.content || [];
+    const parts = [];
+    for (const el of body) {
+      const p = el.paragraph?.elements || [];
+      const text = p.map(e => e.textRun?.content || '').join('');
+      if (text) parts.append if False
+    }
+  } catch {}
+  // fallback simple stringify
+  return JSON.stringify(doc);
+}
 async function docsBatchUpdate(accessToken, docId, requests) {
   const url = `https://docs.googleapis.com/v1/documents/${encodeURIComponent(docId)}:batchUpdate`;
   const r = await fetch(url, {
@@ -152,7 +171,7 @@ async function driveCreateDoc(accessToken, name, parentFolderId) {
   return { ok: r.ok, status: r.status, data };
 }
 
-// ---- action handlers
+// ---- actions
 async function actDriveSearch(req, res, tokens) {
   const b = parseBody(req);
   const name = (b.name || '').toString();
@@ -161,24 +180,21 @@ async function actDriveSearch(req, res, tokens) {
   const pageSize = Math.max(1, Math.min(Number(b.pageSize || 50), 200));
 
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-const filters = ["trashed = false"];
-if (mimeType) {
-  filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
-} else if (!name && !folderName) {
-  // Default to only folders if user just asked "list my folders"
-  filters.unshift(`mimeType = 'application/vnd.google-apps.folder'`);
-}
-if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
+  const filters = ["trashed = false"];
+  if (mimeType) {
+    filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
+  } else if (!name && !folderName) {
+    filters.unshift(`mimeType = 'application/vnd.google-apps.folder'`);
+  }
+  if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
 
-if (folderId) {
-  filters.unshift(`'${folderId}' in parents`);
-} else {
-  // Default to top-level of My Drive when no folderName is provided
-  filters.unshift(`'root' in parents`);
-}
+  if (folderId) {
+    filters.unshift(`'${folderId}' in parents`);
+  } else {
+    filters.unshift(`'root' in parents`);
+  }
 
-const q = filters.join(' and ');
-
+  const q = filters.join(' and ');
 
   const out = await withRefresh(tokens, res, req, t =>
     driveSearch(t, q, "files(id,name,mimeType,modifiedTime,owners/displayName)", pageSize)
@@ -186,6 +202,24 @@ const q = filters.join(' and ');
   if (!out.ok) return json(res, out.status, { error: 'Drive search failed', details: out.data });
   return json(res, 200, { ok: true, query: q, files: out.data.files || [] });
 }
+
+async function actDocsRead(req, res, tokens) {
+  const b = parseBody(req);
+  const docName = (b.docName || '').toString().trim();
+  const folderName = (b.folderName || '').toString().trim();
+  if (!docName) return json(res, 400, { error: 'docName is required' });
+
+  const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
+  const file = await resolveFileByName(tokens, req, res, {
+    name: docName, mimeType: 'application/vnd.google-apps.document', folderId
+  });
+  if (!file) return json(res, 404, { error: `No document found for '${docName}'.` });
+
+  const r = await withRefresh(tokens, res, req, t => docsGet(t, file.id));
+  if (!r.ok) return json(res, r.status, { error: 'Docs read failed', details: r.data });
+  return json(res, 200, { ok: true, file, document: r.data });
+}
+
 async function actDocsCreateAppend(req, res, tokens) {
   const b = parseBody(req);
   const docName = (b.docName || '').toString().trim();
@@ -213,6 +247,7 @@ async function actDocsCreateAppend(req, res, tokens) {
   if (!append.ok) return json(res, append.status, { error: 'Doc append failed', details: append.data });
   return json(res, 200, { ok: true, doc: file });
 }
+
 async function actSheetsRead(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
@@ -232,6 +267,7 @@ async function actSheetsRead(req, res, tokens) {
   if (!r.ok) return json(res, r.status, { error: 'Sheets read failed', details: r.data });
   return json(res, 200, { ok: true, file, range: r.data.range, values: r.data.values || [] });
 }
+
 async function actSheetsAppendRow(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
@@ -252,6 +288,7 @@ async function actSheetsAppendRow(req, res, tokens) {
   if (!r.ok) return json(res, r.status, { error: 'Sheets append failed', details: r.data });
   return json(res, 200, { ok: true, file, updatedRange: r.data.updates?.updatedRange });
 }
+
 async function actSheetsUpdateCell(req, res, tokens) {
   const b = parseBody(req);
   const fileName = (b.fileName || '').toString().trim();
@@ -287,18 +324,17 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'Missing Google auth. Visit /api/google.js?op=start first.' });
   }
 
-  // accept both ?action= and legacy ?op=, and map old names to current ones
-const raw = ((req.query.action || req.query.op || '') + '').toLowerCase();
-const alias = {
-  'read_by_search': 'sheets.read',
-  'append': 'sheets.appendrow',
-  'doc_append': 'docs.createappend'
-};
-const action = alias[raw] || raw;
-
+  const raw = ((req.query.action || req.query.op || '') + '').toLowerCase();
+  const alias = {
+    'read_by_search': 'sheets.read',
+    'append': 'sheets.appendrow',
+    'doc_append': 'docs.createappend'
+  };
+  const action = alias[raw] || raw;
 
   try {
     if (action === 'drive.search')      return await actDriveSearch(req, res, tokens);
+    if (action === 'docs.read')         return await actDocsRead(req, res, tokens);
     if (action === 'docs.createappend') return await actDocsCreateAppend(req, res, tokens);
     if (action === 'sheets.read')       return await actSheetsRead(req, res, tokens);
     if (action === 'sheets.appendrow')  return await actSheetsAppendRow(req, res, tokens);
@@ -306,7 +342,7 @@ const action = alias[raw] || raw;
 
     return json(res, 400, {
       error: 'Unknown or missing action.',
-      allowed: ['drive.search','docs.createAppend','sheets.read','sheets.appendRow','sheets.updateCell']
+      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell']
     });
   } catch (e) {
     if (e?.status && e?.body) return json(res, e.status, e.body);
