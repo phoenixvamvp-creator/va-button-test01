@@ -162,7 +162,12 @@ async function actDriveSearch(req, res, tokens) {
 
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
 const filters = ["trashed = false"];
-if (mimeType) filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
+if (mimeType) {
+  filters.unshift(`mimeType = '${mimeType.replace(/'/g, "\\'")}'`);
+} else if (!name && !folderName) {
+  // Default to only folders if user just asked "list my folders"
+  filters.unshift(`mimeType = 'application/vnd.google-apps.folder'`);
+}
 if (name) filters.push(`name contains '${name.replace(/'/g, "\\'")}'`);
 
 if (folderId) {
