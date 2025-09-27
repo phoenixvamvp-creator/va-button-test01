@@ -7,44 +7,23 @@
   <style>
     :root { --bg:#0b1e33; --card:#0f2742; --ink:#eaf2ff; --muted:#a8c0e6; }
     * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--ink);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji", "Segoe UI Symbol";
-      display: grid; min-height: 100dvh; place-items: center;
-    }
-    .wrap {
-      width: min(920px, 92vw);
-      display: grid; gap: 20px;
-    }
-    header {
-      display: flex; align-items: center; gap: 12px;
-    }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; display: grid; min-height: 100dvh; place-items: center; }
+    .wrap { width: min(920px, 92vw); display: grid; gap: 20px; }
+    header { display: flex; align-items: center; gap: 12px; }
     header img { height: 40px; width: 40px; object-fit: contain; }
     header h1 { font-size: 1.1rem; font-weight: 600; margin: 0; color: var(--muted); }
-    .card {
-      background: var(--card); border-radius: 14px; padding: 16px 16px 2px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
-    }
+    .card { background: var(--card); border-radius: 14px; padding: 16px 16px 2px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
     .row { display: grid; gap: 10px; grid-template-columns: 1fr auto; align-items: center; }
     .status { font-weight: 600; }
     .ok { color: #90EE90; } .bad { color: #ffb3b3; }
-    .btn {
-      background: #1f8fff; color: white; border: 0; border-radius: 10px; padding: 10px 14px;
-      font-weight: 600; cursor: pointer;
-    }
+    .btn { background: #1f8fff; color: white; border: 0; border-radius: 10px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
     .btn.secondary { background: #2e3e57; color: var(--ink); }
     details { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 10px 12px; }
     summary { cursor: pointer; color: var(--muted); }
     form { display: grid; gap: 8px; margin: 10px 0 14px; }
-    input, textarea {
-      background: #112b4a; color: var(--ink); border: 1px solid #25466f; border-radius: 8px;
-      padding: 8px 10px; font-size: 14px; outline: none;
-    }
+    input, textarea { background: #112b4a; color: var(--ink); border: 1px solid #25466f; border-radius: 8px; padding: 8px 10px; font-size: 14px; outline: none; }
     .grid-2 { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
-    pre {
-      white-space: pre-wrap; word-break: break-word; background: #0b1f36; padding: 10px; border-radius: 10px;
-      border: 1px solid #25466f; max-height: 40vh; overflow: auto;
-    }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0b1f36; padding: 10px; border-radius: 10px; border: 1px solid #25466f; max-height: 40vh; overflow: auto; }
     .hint { color: var(--muted); font-size: 13px; }
     a.inline { color: #a6c8ff; text-decoration: underline; }
   </style>
@@ -71,45 +50,49 @@
       <details open>
         <summary><strong>Quick tests</strong> (hit your unified <code>/api/workspace</code>)</summary>
 
+        <form id="formDriveList">
+          <div class="grid-2">
+            <input name="folderName" placeholder="Optional folder (blank = My Drive root)" />
+            <input name="mimeType" placeholder="Optional mimeType (e.g. application/vnd.google-apps.folder)" />
+          </div>
+          <button class="btn" type="submit">Drive · Search/List</button>
+        </form>
+
         <form id="formRead">
           <div class="grid-2">
             <input name="fileName" placeholder="Spreadsheet name (e.g. Master Dataset)" required />
-            <input name="folderName" placeholder="Optional folder name (e.g. Red Bird)" />
+            <input name="folderName" placeholder="Optional folder name" />
           </div>
           <div class="grid-2">
             <input name="tab" placeholder="Tab (default Sheet1)" />
             <input name="range" placeholder="Range (e.g. A:Z or A2:E50)" />
           </div>
-          <button class="btn" type="submit">Sheets · Read by Search</button>
+          <button class="btn" type="submit">Sheets · Read</button>
         </form>
 
-        <form id="formAppend">
+        <form id="formUpdateCell">
           <div class="grid-2">
             <input name="fileName" placeholder="Spreadsheet name" required />
             <input name="folderName" placeholder="Optional folder" />
           </div>
           <div class="grid-2">
             <input name="tab" placeholder="Tab (default Sheet1)" />
-            <input name="row" placeholder='Row JSON (e.g. ["2025-09-14","note"])' />
+            <input name="cell" placeholder="Cell (e.g. B7)" />
           </div>
-          <button class="btn" type="submit">Sheets · Append Row</button>
+          <input name="value" placeholder="Value" />
+          <button class="btn" type="submit">Sheets · Update Cell</button>
         </form>
 
-        <form id="formDoc">
+        <form id="formDocRead">
           <div class="grid-2">
-            <input name="docName" placeholder="Doc name (e.g. Phoenix Notes)" required />
+            <input name="docName" placeholder="Doc name" required />
             <input name="folderName" placeholder="Optional folder" />
           </div>
-          <textarea name="text" rows="3" placeholder="Text to append…"></textarea>
-          <button class="btn" type="submit">Docs · Append Text</button>
+          <button class="btn" type="submit">Docs · Read</button>
         </form>
 
         <pre id="out">Awaiting request…</pre>
       </details>
-      <p class="hint">These forms POST to <code>/api/workspace</code> with <code>action=read_by_search | append | doc_append</code>. Requires the OAuth cookie <code>gTokens</code>.</p>
-      <p class="hint">Prefer testing live in the browser console? See:
-        <code>fetch('/api/workspace.js?action=sheets.read',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'include',body:JSON.stringify({fileName:'Master Dataset',tab:'Sheet1',range:'A:Z'})})</code>
-      </p>
     </section>
   </div>
 
@@ -121,13 +104,11 @@
     function hasGTokensCookie() {
       return document.cookie.split(';').some(c => c.trim().startsWith('gTokens='));
     }
-
     function setStatus() {
       const ok = hasGTokensCookie();
       statusEl.textContent = ok ? 'Google connected ✅' : 'Not connected ❌';
       statusEl.className = ok ? 'ok' : 'bad';
     }
-
     setStatus();
     btnCheck.addEventListener('click', (e)=>{ e.preventDefault(); setStatus(); });
 
@@ -135,7 +116,7 @@
       const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', // send gTokens cookie
+        credentials: 'include',
         body: JSON.stringify(body || {})
       });
       const text = await r.text();
@@ -143,13 +124,21 @@
       try { data = JSON.parse(text); } catch { data = { raw:text }; }
       return { ok: r.ok, status: r.status, data };
     }
+    function pretty(x) { try { return JSON.stringify(x, null, 2); } catch { return String(x); } }
 
-    function pretty(x) {
-      try { return JSON.stringify(x, null, 2); }
-      catch { return String(x); }
-    }
+    document.getElementById('formDriveList').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const payload = {
+        folderName: fd.get('folderName') || '',
+        mimeType: fd.get('mimeType') || '',
+        pageSize: 50
+      };
+      out.textContent = 'Searching…';
+      const res = await postJSON('/api/workspace.js?action=drive.search', payload);
+      out.textContent = pretty(res);
+    });
 
-    // Sheets: read_by_search
     document.getElementById('formRead').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -164,41 +153,29 @@
       out.textContent = pretty(res);
     });
 
-    // Sheets: append
-    document.getElementById('formAppend').addEventListener('submit', async (e) => {
+    document.getElementById('formUpdateCell').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      let row = [];
-      const rowRaw = fd.get('row');
-      if (rowRaw) {
-        try { row = JSON.parse(rowRaw); }
-        catch { return out.textContent = 'Row must be valid JSON array, e.g. ["2025-09-14","note"]'; }
-      }
       const payload = {
-  fileName: fd.get('fileName') || '',
-  folderName: fd.get('folderName') || '',
-  tab: fd.get('tab') || 'Sheet1',
-  values: row   // backend expects 'values' (array), not 'row'
-};
-out.textContent = 'Appending…';
-const res = await postJSON('/api/workspace.js?action=sheets.appendrow', payload);
+        fileName: fd.get('fileName') || '',
+        folderName: fd.get('folderName') || '',
+        tab: fd.get('tab') || 'Sheet1',
+        cell: fd.get('cell') || '',
+        value: fd.get('value') || ''
+      };
+      out.textContent = 'Updating…';
+      const res = await postJSON('/api/workspace.js?action=sheets.updatecell', payload);
       out.textContent = pretty(res);
     });
 
-    // Docs: doc_append
-    document.getElementById('formDoc').addEventListener('submit', async (e) => {
+    document.getElementById('formDocRead').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
-      const payload = {
-        docName: fd.get('docName') || '',
-        folderName: fd.get('folderName') || '',
-        text: fd.get('text') || ''
-      };
-      out.textContent = 'Appending to Doc…';
-      const res = await postJSON('/api/workspace.js?action=docs.createappend', payload);
+      const payload = { docName: fd.get('docName') || '', folderName: fd.get('folderName') || '' };
+      out.textContent = 'Reading doc…';
+      const res = await postJSON('/api/workspace.js?action=docs.read', payload);
       out.textContent = pretty(res);
     });
   </script>
 </body>
 </html>
-
