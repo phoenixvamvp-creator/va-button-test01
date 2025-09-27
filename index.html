@@ -148,18 +148,17 @@ async function handleToolCall(name, args, callId) {
         tab: args.tab || 'Sheet1',
         range: args.range || 'A:Z'
       };
-    }
-
-    else if (name === 'sheets_updatecell') {
-      url = '/api/workspace.js?action=sheets.updatecell';
-      body = {
-        fileName: args.fileName || '',
-        folderName: args.folderName || '',
-        tab: args.tab || 'Sheet1',
-        cell: args.cell || '',
-        value: args.value
-      };
-          } else if (name === 'drive.search') {
+          } else if (name === 'sheets.updatecell') {
+        url = '/api/workspace.js?action=sheets.updatecell';
+        body = {
+          fileName: args.fileName || '',
+          folderName: args.folderName || '',
+          tab: args.tab || 'Sheet1',
+          cell: args.cell || '',
+          value: args.value
+        };
+      }
+    else if (name === 'drive.search') {
         url = '/api/workspace.js?action=drive.search';
         body = {
           mimeType: args.mimeType || '',
@@ -288,21 +287,23 @@ dc.onopen = () => {
             }
           },
           {
-            type: 'function',
-            name: 'sheets_updatecell',
-            description: 'Update a single cell in a Google Sheet.',
-            parameters: {
-              type: 'object',
-              properties: {
-                fileName: { type: 'string' },
-                folderName: { type: 'string' },
-                tab: { type: 'string', description: 'Default Sheet1' },
-                cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-                value: {}
-              },
-              required: ['fileName', 'cell', 'value']
-            }
-          },
+  type: 'function',
+  name: 'sheets.updatecell',
+  description: 'Update a single cell in a Google Sheet.',
+  parameters: {
+    type: 'object',
+    properties: {
+      fileName: { type: 'string' },
+      folderName: { type: 'string' },
+      tab: { type: 'string', description: 'Default Sheet1' },
+      cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+      value: {}
+    },
+    required: ['fileName', 'cell', 'value']
+  }
+}
+
+          ,
           {
             type: 'function',
             name: 'drive.search',
