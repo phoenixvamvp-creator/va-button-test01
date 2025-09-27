@@ -157,15 +157,16 @@ async function handleToolCall(name, args, callId) {
         cell: args.cell || '',
         value: args.value
       };
-    } else if (name === 'drive_search') {
-      url = '/api/workspace.js?action=drive.search';
-      body = {
-        mimeType: args.mimeType || '',
-        name: args.name || '',
-        folderName: args.folderName || '',
-        pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
-      };
-    } else {
+          } else if (name === 'drive.search') {
+        url = '/api/workspace.js?action=drive.search';
+        body = {
+          mimeType: args.mimeType || '',
+          name: args.name || '',
+          folderName: args.folderName || '',
+          pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
+        };
+      }
+    else {
       const out = { error: `Unsupported tool: ${name}` };
       dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
       dc.send(JSON.stringify({ type: 'response.create' }));
@@ -302,7 +303,7 @@ dc.onopen = () => {
           },
           {
             type: 'function',
-            name: 'drive_search',
+            name: 'drive.search',
             description: 'List files/folders in Google Drive by optional mimeType/name/folderName.',
             parameters: {
               type: 'object',
