@@ -122,7 +122,7 @@ export default async function handler(req, res) {
     const tokens = await tokenResp.json();
     if (!tokenResp.ok) return res.status(400).json(tokens);
     writeTokens(res, tokens);
-    const backTo = isLocalHost(host) ? '/connected.html' : '/connected.html';
+    const backTo = isLocalHost(host) ? '/index.html' : '/index.html';
     return res.status(302).setHeader('Location', backTo).end();
   }
 
