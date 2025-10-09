@@ -42,6 +42,7 @@
       box-shadow: 0 12px 30px rgba(0,0,0,.25);
     }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
     button, .btn {
       appearance: none; border: none; background: #F4F6FC; color: #0B1B34;
       padding: 10px 14px; border-radius: 12px; font-weight: 700; cursor: pointer;
@@ -49,13 +50,18 @@
     }
     button:active { transform: translateY(1px); }
     button[disabled] { opacity: .6; cursor: not-allowed; }
+
     #voiceToggle {
       background: var(--btn-bg); color: var(--btn-tx);
       display: inline-flex; align-items: center; gap: 10px;
       padding: 12px 18px; border-radius: 16px;
     }
-    #voiceToggle img { width: 28px; height: 28px; object-fit: contain; display: block; pointer-events: none; user-select: none; }
+    #voiceToggle img {
+      width: 28px; height: 28px; object-fit: contain; display: block;
+      pointer-events: none; user-select: none;
+    }
     #voiceToggle:hover { background: #003366; }
+
     .btn-outline { background: transparent; color: var(--accent); border: 1px solid rgba(255,255,255,.2); }
     input[type="text"] {
       flex: 1 1 220px; background: rgba(255,255,255,.06); color: var(--text);
@@ -108,8 +114,11 @@
     const btnGoogle = document.getElementById('googleConnect');
     const inputEl = document.getElementById('textInput');
     const sendBtn = document.getElementById('sendText');
-    const setSendReady = (ready) => { sendBtn.disabled = !ready; };
-    setSendReady(false);
+    const setSendReady = (ready) => {
+  sendBtn.disabled = !ready;      // only lock the Send button
+  // keep input enabled so you can type anytime
+};
+setSendReady(false); // Send locked until data channel opens
 
     const audioEl = document.getElementById('assistantAudio');
 
@@ -123,72 +132,72 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-    const toolArgBuf = Object.create(null);
+    // Buffer for streaming tool-call args
+const toolArgBuf = Object.create(null);
 
-    async function handleToolCall(name, args, callId) {
-      try {
-        let url = '', body = {};
+// Run the right backend action and send the result back to the model
+async function handleToolCall(name, args, callId) {
+  try {
+    let url = '', body = {};
 
-        if (name === 'sheets.read') {
-          url = '/api/workspace.js?action=sheets.read';
-          body = {
-            fileName: args.fileName || '',
-            folderName: args.folderName || '',
-            tab: args.tab || 'Sheet1',
-            range: args.range || 'A:Z'
-          };
-        } else if (name === 'sheets.updatecell') {
-          url = '/api/workspace.js?action=sheets.updatecell';
-          body = {
-            fileName: args.fileName || '',
-            folderName: args.folderName || '',
-            tab: args.tab || 'Sheet1',
-            cell: args.cell || '',
-            value: args.value
-          };
-        } else if (name === 'drive.search') {
-          url = '/api/workspace.js?action=drive.search';
-          body = {
-            mimeType: args.mimeType || '',
-            name: args.name || '',
-            folderName: args.folderName || '',
-            pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
-          };
-        } else if (name === 'docs.read') {
-          url = '/api/workspace.js?action=docs.read';
-          body = {
-            docName: args.docName || '',
-            folderName: args.folderName || ''
-          };
-        } else {
-          const out = { error: `Unsupported tool: ${name}` };
-          dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-          dc.send(JSON.stringify({ type: 'response.create' }));
-          return;
-        }
-
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(body)
-        });
-        const text = await r.text();
-        log('[TOOL]', name, r.status, text.slice(0, 300));
-
-        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      } catch (e) {
-        const out = { error: String(e?.message || e) };
-        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      }
+    if (name === 'sheets_read') {
+      url = '/api/workspace.js?action=sheets.read';
+      body = {
+        fileName: args.fileName || '',
+        folderName: args.folderName || '',
+        tab: args.tab || 'Sheet1',
+        range: args.range || 'A:Z'
+      };
+    } else if (name === 'sheets_updatecell') {
+      url = '/api/workspace.js?action=sheets.updatecell';
+      body = {
+        fileName: args.fileName || '',
+        folderName: args.folderName || '',
+        tab: args.tab || 'Sheet1',
+        cell: args.cell || '',
+        value: args.value
+      };
+    } else if (name === 'drive_search') {
+      url = '/api/workspace.js?action=drive.search';
+      body = {
+        mimeType: args.mimeType || '',
+        name: args.name || '',
+        folderName: args.folderName || '',
+        pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
+      };
+    } else {
+      const out = { error: `Unsupported tool: ${name}` };
+      dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+      dc.send(JSON.stringify({ type: 'response.create' }));
+      return;
     }
 
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+    const text = await r.text();
+    log('[TOOL]', name, r.status, text.slice(0, 300));
+
+    // return result to model, then let it continue
+    dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
+    dc.send(JSON.stringify({ type: 'response.create' }));
+  } catch (e) {
+    const out = { error: String(e?.message || e) };
+    dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+    dc.send(JSON.stringify({ type: 'response.create' }));
+  }
+}
+
+
+    // Google connect
     btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
 
+    // Text -> speak back
     sendBtn.addEventListener('click', () => {
       const text = (inputEl.value || '').trim();
       if (!text) return;
@@ -197,7 +206,10 @@
         return;
       }
       try {
-        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text }}));
+        dc.send(JSON.stringify({
+          type: 'response.create',
+          response: { instructions: text }
+        }));
         log('[TX] text prompt → response.create');
       } catch (e) {
         log('[ERR] send text:', e?.message || e);
@@ -207,6 +219,7 @@
     async function startRealtime() {
       try {
         setStatus('requesting mic…');
+
         try {
           if ('permissions' in navigator && navigator.permissions?.query) {
             const p = await navigator.permissions.query({ name: 'microphone' });
@@ -214,10 +227,12 @@
           }
         } catch {}
 
+        // mic
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mic = stream;
         const micTrack = mic.getTracks()[0];
 
+        // pc
         pc = new RTCPeerConnection();
         pc.oniceconnectionstatechange = () => log('ICE:', pc.iceConnectionState);
         pc.onconnectionstatechange = () => log('PC:', pc.connectionState);
@@ -227,137 +242,141 @@
           audioEl.play().catch(err => log('[AUDIO] play blocked:', err?.message || err));
         };
 
+        // audio transceiver
         const tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
         try { await tx.sender.replaceTrack(micTrack); } catch {}
         if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
 
+        // data channel -> session settings
         dc = pc.createDataChannel('oai-events');
 
-        dc.onopen = () => {
-          log('[DC] open');
-          setSendReady(true);
-          setStatus('ready');
-          try {
-            const sessionUpdate = {
-              type: 'session.update',
-              session: {
-                voice: 'cedar',
-                instructions:
-                  'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
-                  'Never discuss adult content, sexuality, terrorism or violence.' +
-                  'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
-                  'For a request like "list my folders", call drive.search with no folderName. ' +
-                  'Never guess or describe file contents without a successful tool call. ' +
-                  'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
-                  'When you read a sheet, state the exact file name, tab, and range you used. ' +
-                  'When you edit a cell, state the file name, tab, and cell you modified. ' +
-                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
-                tools: [
-                  {
-                    type: 'function',
-                    name: 'sheets.read',
-                    description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        fileName: { type: 'string', description: 'Exact sheet name' },
-                        folderName: { type: 'string', description: 'Optional parent folder name' },
-                        tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
-                        range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
-                      },
-                      required: ['fileName']
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'sheets.updatecell',
-                    description: 'Update a single cell in a Google Sheet.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        fileName: { type: 'string' },
-                        folderName: { type: 'string' },
-                        tab: { type: 'string', description: 'Default Sheet1' },
-                        cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-                        value: {}
-                      },
-                      required: ['fileName', 'cell', 'value']
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'drive.search',
-                    description: 'Search Google Drive for files or folders. Use with no arguments to list top-level folders.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        mimeType: { type: 'string', description: 'Use application/vnd.google-apps.folder to list folders' },
-                        name: { type: 'string', description: 'Optional partial file/folder name' },
-                        folderName: { type: 'string', description: 'Optional parent folder name' },
-                        pageSize: { type: 'integer', minimum: 1, maximum: 200 }
-                      }
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'docs.read',
-                    description: 'Read plain text from a Google Doc by name (optional folderName).',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        docName: { type: 'string' },
-                        folderName: { type: 'string' }
-                      },
-                      required: ['docName']
-                    }
-                  }
-                ]
+dc.onopen = () => {
+  log('[DC] open');
+  setSendReady(true);
+  setStatus('ready');
+  try {
+    const sessionUpdate = {
+      type: 'session.update',
+      session: {
+        voice: 'cedar',
+        instructions:
+          'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
+          'Never discuss adult content, sexuality, terrorism or violence.' +
+          'When the user asks about Google Docs or Google Sheets, you MUST call the tools and wait for their results. ' +
+          'Never guess or describe file contents without a successful tool call. ' +
+          'If a tool fails or returns no data, say exactly what failed (e.g., missing file, wrong tab/range) and ask for the needed detail. ' +
+          'When you read a sheet, state the exact file name, tab, and range you used. ' +
+          'When you edit a cell, state the file name, tab, and cell you modified. ' +
+          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
+        tools: [
+          {
+            type: 'function',
+            name: 'sheets_read',
+            description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string', description: 'Exact sheet name' },
+                folderName: { type: 'string', description: 'Optional parent folder name' },
+                tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
+                range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
+              },
+              required: ['fileName']
+            }
+          },
+          {
+            type: 'function',
+            name: 'sheets_updatecell',
+            description: 'Update a single cell in a Google Sheet.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string' },
+                folderName: { type: 'string' },
+                tab: { type: 'string', description: 'Default Sheet1' },
+                cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+                value: {}
+              },
+              required: ['fileName', 'cell', 'value']
+            }
+          },
+          {
+            type: 'function',
+            name: 'drive_search',
+            description: 'List files/folders in Google Drive by optional mimeType/name/folderName.',
+            parameters: {
+              type: 'object',
+              properties: {
+                mimeType: { type: 'string' },
+                name: { type: 'string' },
+                folderName: { type: 'string' },
+                pageSize: { type: 'integer', minimum: 1, maximum: 200 }
               }
-            };
-            dc.send(JSON.stringify(sessionUpdate));
-            dc.send(JSON.stringify({ type: 'response.create', response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' } }));
-          } catch (e) { log('[DC] session.update error:', e?.message || e); }
-        };
-
-        dc.onmessage = (evt) => {
-          log('[DC onmessage]', evt.data);
-          let msg;
-          try { msg = JSON.parse(evt.data); }
-          catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
-
-          const isDelta =
-            msg.type === 'response.function_call_arguments.delta' ||
-            msg.type === 'response.function_call.arguments.delta';
-
-          const isDone =
-            msg.type === 'response.function_call_arguments.done' ||
-            msg.type === 'response.function_call.completed';
-
-          if (isDelta) {
-            const id = msg.call_id || msg.id;
-            const frag =
-              (typeof msg.delta === 'string' ? msg.delta :
-              (typeof msg.arguments === 'string' ? msg.arguments : ''));
-            toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
-            return;
+            }
           }
+        ]
+      }
+    };
 
-          if (isDone) {
-            const id = msg.call_id || msg.id;
-            const name = msg.name;
-            const argsStr =
-              (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
-            delete toolArgBuf[id];
+    dc.send(JSON.stringify(sessionUpdate));
 
-            let args = {};
-            try { args = JSON.parse(argsStr); } catch {}
-            handleToolCall(name, args, id);
-            return;
-          }
-        };
+    // Optional audible confirmation
+    dc.send(JSON.stringify({
+      type: 'response.create',
+      response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' }
+    }));
+  } catch (e) {
+    log('[DC] session.update error:', e?.message || e);
+  }
+};
 
-        dc.onerror = (e) => log('[DC] error', e);
-        dc.onclose = () => { log('[DC] closed'); setSendReady(false); setStatus('disconnected'); };
+// Handle tool calls (supports both event-name variants)
+dc.onmessage = (evt) => {
+  let msg;
+  try { msg = JSON.parse(evt.data); }
+  catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
+
+  log('[EVT]', msg.type || 'message');
+
+  const isDelta =
+    msg.type === 'response.function_call_arguments.delta' ||
+    msg.type === 'response.function_call.arguments.delta';
+
+  const isDone =
+    msg.type === 'response.function_call_arguments.done' ||
+    msg.type === 'response.function_call.completed';
+
+  if (isDelta) {
+    const id = msg.call_id || msg.id;
+    const frag =
+      (typeof msg.delta === 'string' ? msg.delta :
+      (typeof msg.arguments === 'string' ? msg.arguments : ''));
+    toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
+    return;
+  }
+
+  if (isDone) {
+    const id = msg.call_id || msg.id;
+    const name = msg.name;
+    const argsStr =
+      (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
+    delete toolArgBuf[id];
+
+    let args = {};
+    try { args = JSON.parse(argsStr); } catch {}
+    handleToolCall(name, args, id);
+    return;
+  }
+};
+
+dc.onerror = (e) => log('[DC] error', e);
+dc.onclose = () => {
+  log('[DC] closed');
+  setSendReady(false);
+  setStatus('disconnected');
+};
+
+
 
         setStatus('creating offer…');
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
@@ -371,7 +390,10 @@
         });
         const answer = await res.text();
         log('[HTTP] /api/realtime/offer →', res.status);
-        if (!res.ok) { try { log('[ERR]', JSON.parse(answer)); } catch { log('[ERR]', answer); } throw new Error('Offer→Answer failed'); }
+        if (!res.ok) {
+          try { log('[ERR]', JSON.parse(answer)); } catch { log('[ERR]', answer); }
+          throw new Error('Offer→Answer failed');
+        }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answer });
         setStatus('connected — waiting for channel…');
@@ -392,30 +414,35 @@
       log('[RT] stopped');
     }
 
-    async function ensureGoogleAuth() {
-      try {
-        const r = await fetch('/api/google.js?op=status', { credentials: 'include' });
-        const data = await r.json();
-        log('[AUTH]', data);
-        if (data.connected && !data.refresh_problem) return true;
-        setStatus('connecting Google…');
-        window.location.href = '/api/google.js?op=start';
-        return false;
-      } catch (e) {
-        log('[AUTH] status error:', e?.message || e);
-        window.location.href = '/api/google.js?op=start';
-        return false;
-      }
-    }
+    // --- Google auth helper: ping status (server will refresh if near-expiry)
+// If not connected or refresh failed, redirect to OAuth and bail out.
+async function ensureGoogleAuth() {
+  try {
+    const r = await fetch('/api/google.js?op=status', { credentials: 'include' });
+    const data = await r.json();
+    log('[AUTH]', data);
+    if (data.connected && !data.refresh_problem) return true;
+    setStatus('connecting Google…');
+    window.location.href = '/api/google.js?op=start';
+    return false; // redirecting
+  } catch (e) {
+    log('[AUTH] status error:', e?.message || e);
+    window.location.href = '/api/google.js?op=start';
+    return false;
+  }
+}
 
+    
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
         if (!live) {
           btnLabel.textContent = 'Connecting…';
-          const ok = await ensureGoogleAuth();
-          if (!ok) return;
-          await startRealtime();
+// 🔐 check Google tokens before starting RTC
+const ok = await ensureGoogleAuth();
+if (!ok) return; // will redirect to OAuth if expired/missing
+await startRealtime();
+
           live = true;
           btnLabel.textContent = 'Stop';
         } else {
@@ -433,8 +460,11 @@
     });
 
     inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); if (!sendBtn.disabled) sendBtn.click(); }
-    });
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (!sendBtn.disabled) sendBtn.click(); // only send when channel is ready
+  }
+});
   </script>
 </body>
 </html>
