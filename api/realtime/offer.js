@@ -67,7 +67,7 @@ export default async function handler(req, res) {
         'Accept': 'application/sdp',
         'OpenAI-Beta': 'realtime=v1'
       },
-      body: sdpOfferO
+      body: sdpOffer
     });
 
     const text = await upstream.text();
