@@ -1,5 +1,14 @@
 {
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" }
+  "builds": [
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "webrtc.html", "use": "@vercel/static" },
+    { "src": "connected.html", "use": "@vercel/static" },
+    { "src": "public/**/*", "use": "@vercel/static" },
+    { "src": "api/**/*.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "^/$", "dest": "/index.html" },
+    { "src": "^/(webrtc|connected)$", "dest": "/$1.html" },
+    { "src": "^/api/(.*)$", "dest": "/api/$1" }
   ]
 }
