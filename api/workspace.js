@@ -142,9 +142,8 @@ function extractPlainTextFromDoc(doc) {
     for (const el of body) {
       const p = el.paragraph?.elements || [];
       const text = p.map(e => e.textRun?.content || '').join('');
-      if (text) parts.push(text);
+      if (text) parts.append if False
     }
-    return parts.join('\n');
   } catch {}
   // fallback simple stringify
   return JSON.stringify(doc);
