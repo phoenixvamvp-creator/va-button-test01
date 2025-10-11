@@ -50,6 +50,7 @@
         pc.ontrack = (e)=>{
           log('[RT] ontrack: remote stream received');
           audioEl.srcObject = e.streams[0];
+          log('[RT] remote stream tracks:', e.streams[0].getAudioTracks());
           audioEl.play().catch(err=>log('[AUDIO] play() blocked:', err?.message||err));
         };
 
@@ -66,8 +67,8 @@
             dc.send(JSON.stringify({
               type: 'session.update',
               session: {
-                voice: 'cedar',                          // 👈 voice fixed
-                instructions: 'Respond in English only. Warm, concise, friendly tone.'
+                voice: 'cedar',                          
+                instructions: 'Respond in English only. Warm, concise, friendly tone. Say hello and tell a joke.'
               }
             }));
             dc.send(JSON.stringify({
