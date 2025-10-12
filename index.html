@@ -320,6 +320,7 @@
         };
 
         dc.onmessage = (evt) => {
+          log('[DC msg raw]', evt.data);
           let msg;
           try { msg = JSON.parse(evt.data); }
           catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
