@@ -146,6 +146,14 @@
             cell: args.cell || '',
             value: args.value
           };
+          } else if (name === 'sheets.appendrow') {
+          url = '/api/workspace.js?action=sheets.appendrow';
+          body = {
+            fileName: args.fileName || '',
+            folderName: args.folderName || '',
+            tab: args.tab || 'Sheet1',
+            values: Array.isArray(args.values) ? args.values : []
+          };
         } else if (name === 'drive.search') {
           url = '/api/workspace.js?action=drive.search';
           body = {
@@ -282,6 +290,25 @@
                         value: {}
                       },
                       required: ['fileName', 'cell', 'value']
+                    }
+                  },
+                  {
+                    type: 'function',
+                    name: 'sheets.appendrow',
+                    description: 'Append one row to a Google Sheet.',
+                    parameters: {
+                      type: 'object',
+                      properties: {
+                        fileName: { type: 'string' },
+                        folderName: { type: 'string' },
+                        tab: { type: 'string', description: 'Default Sheet1' },
+                        values: {
+                          type: 'array',
+                          description: 'One row to append; each item is a cell value',
+                          items: {}
+                        }
+                      },
+                      required: ['fileName', 'values']
                     }
                   },
                   {
