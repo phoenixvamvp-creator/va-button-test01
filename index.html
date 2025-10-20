@@ -183,8 +183,9 @@
         voice: 'cedar',
         instructions:
           'Your name is Nyx. Always start speaking English. ',
-      
-       
+      }
+    }
+  };       
 
     // send the session update once, then wait to greet until we get session.updated
 dc.send(JSON.stringify(sessionUpdate));
@@ -194,18 +195,24 @@ log('[DC] session.update sent');
 }
 }; // <-- end of dc.onopen
 
-  if (t === 'session.updated') {
+  dc.onmessage = (evt) => {
+  let msg;
+  try { msg = JSON.parse(evt.data); } catch { return; }
+  if (msg.type === 'session.updated') {
     log('[DC] session.updated');
-    // Send the greeting AFTER the update to avoid racing with defaults
     if (!window.__greeted) {
       window.__greeted = true;
       dc.send(JSON.stringify({
         type: 'response.create',
-        response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' }
+        response: { instructions: 'Hello! Nyx is ready.' }
       }));
     }
     return;
   }
+  if (msg.type === 'error' || msg.type === 'response.error' || msg.type === 'session.error') {
+    console.warn('[DC error]', msg);
+  }
+};
 
   if (t === 'error' || t === 'response.error' || t === 'session.error') {
     console.warn('[DC error]', msg);
