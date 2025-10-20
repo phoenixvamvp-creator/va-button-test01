@@ -253,7 +253,7 @@
         voice: 'cedar',
         instructions:
           'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
-          'Never discuss adult content, sexuality, terrorism or violence.' +
+          'Never discuss adult content, sexuality, terrorism or violence. ' +
           'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
           'For a request like "list my folders", call drive.search with no folderName. ' +
           'Never guess or describe file contents without a successful tool call. ' +
@@ -369,9 +369,6 @@ log('[DC] session.update sent');
   console.warn('[DC] failed to send session.update', err);
 }
 }; // <-- end of dc.onopen
-
-// Buffer for streamed tool-call arguments (add once)
-const toolArgBuf = {};
 
 // Unified message handler: supports both legacy function_call and new tool_call events
 dc.onmessage = (evt) => {
