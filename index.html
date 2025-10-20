@@ -242,105 +242,132 @@
         dc = pc.createDataChannel('oai-events');
 
         dc.onopen = () => {
-          log('[DC] open');
-          setSendReady(true);
-          setStatus('ready');
-          try {
-            const sessionUpdate = {
-              type: 'session.update',
-              session: {
-                voice: 'cedar',
-                instructions:
-                  'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
-                  'Never discuss adult content, sexuality, terrorism or violence.' +
-                  'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
-                  'For a request like "list my folders", call drive.search with no folderName. ' +
-                  'Never guess or describe file contents without a successful tool call. ' +
-                  'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
-                  'When you read a sheet, state the exact file name, tab, and range you used. ' +
-                  'When you edit a cell, state the file name, tab, and cell you modified. ' +
-                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
-                tools: [
-                  {
-                    type: 'function',
-                    name: 'sheets.read',
-                    description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        fileName: { type: 'string', description: 'Exact sheet name' },
-                        folderName: { type: 'string', description: 'Optional parent folder name' },
-                        tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
-                        range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
-                      },
-                      required: ['fileName']
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'sheets.updatecell',
-                    description: 'Update a single cell in a Google Sheet.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        fileName: { type: 'string' },
-                        folderName: { type: 'string' },
-                        tab: { type: 'string', description: 'Default Sheet1' },
-                        cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-                        value: {}
-                      },
-                      required: ['fileName', 'cell', 'value']
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'sheets.appendrow',
-                    description: 'Append one row to a Google Sheet.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        fileName: { type: 'string' },
-                        folderName: { type: 'string' },
-                        tab: { type: 'string', description: 'Default Sheet1' },
-                        values: {
-                          type: 'array',
-                          description: 'One row to append; each item is a cell value',
-                          items: {}
-                        }
-                      },
-                      required: ['fileName', 'values']
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'drive.search',
-                    description: 'Search Google Drive for files or folders. Use with no arguments to list top-level folders.',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        mimeType: { type: 'string', description: 'Use application/vnd.google-apps.folder to list folders' },
-                        name: { type: 'string', description: 'Optional partial file/folder name' },
-                        folderName: { type: 'string', description: 'Optional parent folder name' },
-                        pageSize: { type: 'integer', minimum: 1, maximum: 200 }
-                      }
-                    }
-                  },
-                  {
-                    type: 'function',
-                    name: 'docs.read',
-                    description: 'Read plain text from a Google Doc by name (optional folderName).',
-                    parameters: {
-                      type: 'object',
-                      properties: {
-                        docName: { type: 'string' },
-                        folderName: { type: 'string' }
-                      },
-                      required: ['docName']
-                    }
+  log('[DC] open');
+  setSendReady(true);
+  setStatus('ready');
+
+  try {
+    const sessionUpdate = {
+      type: 'session.update',
+      session: {
+        voice: 'cedar',
+        instructions:
+          'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
+          'Never discuss adult content, sexuality, terrorism or violence.' +
+          'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
+          'For a request like "list my folders", call drive.search with no folderName. ' +
+          'Never guess or describe file contents without a successful tool call. ' +
+          'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
+          'When you read a sheet, state the exact file name, tab, and range you used. ' +
+          'When you edit a cell, state the file name, tab, and cell you modified. ' +
+          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
+        // Explicitly allow tool-calling
+        tool_choice: 'auto',
+        tools: [
+          {
+            type: 'function',
+            name: 'sheets.read',
+            description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string', description: 'Exact sheet name' },
+                folderName: { type: 'string', description: 'Optional parent folder name' },
+                tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
+                range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
+              },
+              required: ['fileName']
+            }
+          },
+          {
+            type: 'function',
+            name: 'sheets.updatecell',
+            description: 'Update a single cell in a Google Sheet.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string' },
+                folderName: { type: 'string' },
+                tab: { type: 'string', description: 'Default Sheet1' },
+                cell: { type: 'string', description: 'A1 notation, e.g. B7' },
+                // FIX: provide explicit types for value
+                value: {
+                  oneOf: [
+                    { type: 'string' },
+                    { type: 'number' },
+                    { type: 'boolean' },
+                    { type: 'null' }
+                  ],
+                  description: 'Value to write into the cell'
+                }
+              },
+              required: ['fileName', 'cell', 'value']
+            }
+          },
+          {
+            type: 'function',
+            name: 'sheets.appendrow',
+            description: 'Append one row to a Google Sheet.',
+            parameters: {
+              type: 'object',
+              properties: {
+                fileName: { type: 'string' },
+                folderName: { type: 'string' },
+                tab: { type: 'string', description: 'Default Sheet1' },
+                values: {
+                  type: 'array',
+                  description: 'One row to append; each item is a cell value',
+                  // FIX: provide explicit types for items
+                  items: {
+                    oneOf: [
+                      { type: 'string' },
+                      { type: 'number' },
+                      { type: 'boolean' },
+                      { type: 'null' }
+                    ]
                   }
-                ]
+                }
+              },
+              required: ['fileName', 'values']
+            }
+          },
+          {
+            type: 'function',
+            name: 'drive.search',
+            description: 'Search Google Drive for files or folders. Use with no arguments to list top-level folders.',
+            parameters: {
+              type: 'object',
+              properties: {
+                mimeType: { type: 'string', description: 'Use application/vnd.google-apps.folder to list folders' },
+                name: { type: 'string', description: 'Optional partial file/folder name' },
+                folderName: { type: 'string', description: 'Optional parent folder name' },
+                pageSize: { type: 'integer', minimum: 1, maximum: 200 }
               }
-            };
+            }
+          },
+          {
+            type: 'function',
+            name: 'docs.read',
+            description: 'Read plain text from a Google Doc by name (optional folderName).',
+            parameters: {
+              type: 'object',
+              properties: {
+                docName: { type: 'string' },
+                folderName: { type: 'string' }
+              },
+              required: ['docName']
+            }
+          }
+        ]
+      }
+    };
+
+    dc.send(JSON.stringify(sessionUpdate));
+    log('[DC] session.update sent');
+  } catch (err) {
+    console.warn('[DC] failed to send session.update', err);
+  }
+};
             dc.send(JSON.stringify(sessionUpdate));
             dc.send(JSON.stringify({ type: 'response.create', response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' } }));
           } catch (e) { log('[DC] session.update error:', e?.message || e); }
