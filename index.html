@@ -123,77 +123,7 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-    const toolArgBuf = Object.create(null);
-
-    async function handleToolCall(name, args, callId) {
-      try {
-        let url = '', body = {};
-
-        if (name === 'sheets.read') {
-          url = '/api/workspace.js?action=sheets.read';
-          body = {
-            fileName: args.fileName || '',
-            folderName: args.folderName || '',
-            tab: args.tab || 'Sheet1',
-            range: args.range || 'A:Z'
-          };
-        } else if (name === 'sheets.updatecell') {
-          url = '/api/workspace.js?action=sheets.updatecell';
-          body = {
-            fileName: args.fileName || '',
-            folderName: args.folderName || '',
-            tab: args.tab || 'Sheet1',
-            cell: args.cell || '',
-            value: args.value
-          };
-          } else if (name === 'sheets.appendrow') {
-          url = '/api/workspace.js?action=sheets.appendrow';
-          body = {
-            fileName: args.fileName || '',
-            folderName: args.folderName || '',
-            tab: args.tab || 'Sheet1',
-            values: Array.isArray(args.values) ? args.values : []
-          };
-        } else if (name === 'drive.search') {
-          url = '/api/workspace.js?action=drive.search';
-          body = {
-            mimeType: args.mimeType || '',
-            name: args.name || '',
-            folderName: args.folderName || '',
-            pageSize: Math.max(1, Math.min(Number(args.pageSize || 50), 200))
-          };
-        } else if (name === 'docs.read') {
-          url = '/api/workspace.js?action=docs.read';
-          body = {
-            docName: args.docName || '',
-            folderName: args.folderName || ''
-          };
-        } else {
-          const out = { error: `Unsupported tool: ${name}` };
-          dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-          dc.send(JSON.stringify({ type: 'response.create' }));
-          return;
-        }
-
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(body)
-        });
-        const text = await r.text();
-        log('[TOOL]', name, r.status, text.slice(0, 300));
-
-        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      } catch (e) {
-        const out = { error: String(e?.message || e) };
-        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      }
-    }
-
-    btnGoogle.addEventListener('click', () => {
+        btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
 
@@ -252,115 +182,9 @@
       session: {
         voice: 'cedar',
         instructions:
-          'Your name is Nyx. Always start speaking English. Be friendly and helpful. ' +
-          'Never discuss adult content, sexuality, terrorism or violence. ' +
-          'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
-          'For a request like "list my folders", call drive.search with no folderName. ' +
-          'Never guess or describe file contents without a successful tool call. ' +
-          'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
-          'When you read a sheet, state the exact file name, tab, and range you used. ' +
-          'When you edit a cell, state the file name, tab, and cell you modified. ' +
-          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.',
-        // Explicitly allow tool-calling
-        tool_choice: 'auto',
-        tools: [
-          {
-            type: 'function',
-            name: 'sheets.read',
-            description: 'Read rows from a Google Sheet by name and optional folderName, tab, range.',
-            parameters: {
-              type: 'object',
-              properties: {
-                fileName: { type: 'string', description: 'Exact sheet name' },
-                folderName: { type: 'string', description: 'Optional parent folder name' },
-                tab: { type: 'string', description: 'Sheet tab (default Sheet1)' },
-                range: { type: 'string', description: 'A1 range, e.g. A:Z or A2:E50' }
-              },
-              required: ['fileName']
-            }
-          },
-          {
-            type: 'function',
-            name: 'sheets.updatecell',
-            description: 'Update a single cell in a Google Sheet.',
-            parameters: {
-              type: 'object',
-              properties: {
-                fileName: { type: 'string' },
-                folderName: { type: 'string' },
-                tab: { type: 'string', description: 'Default Sheet1' },
-                cell: { type: 'string', description: 'A1 notation, e.g. B7' },
-                // FIX: provide explicit types for value
-                value: {
-                  oneOf: [
-                    { type: 'string' },
-                    { type: 'number' },
-                    { type: 'boolean' },
-                    { type: 'null' }
-                  ],
-                  description: 'Value to write into the cell'
-                }
-              },
-              required: ['fileName', 'cell', 'value']
-            }
-          },
-          {
-            type: 'function',
-            name: 'sheets.appendrow',
-            description: 'Append one row to a Google Sheet.',
-            parameters: {
-              type: 'object',
-              properties: {
-                fileName: { type: 'string' },
-                folderName: { type: 'string' },
-                tab: { type: 'string', description: 'Default Sheet1' },
-                values: {
-                  type: 'array',
-                  description: 'One row to append; each item is a cell value',
-                  // FIX: provide explicit types for items
-                  items: {
-                    oneOf: [
-                      { type: 'string' },
-                      { type: 'number' },
-                      { type: 'boolean' },
-                      { type: 'null' }
-                    ]
-                  }
-                }
-              },
-              required: ['fileName', 'values']
-            }
-          },
-          {
-            type: 'function',
-            name: 'drive.search',
-            description: 'Search Google Drive for files or folders. Use with no arguments to list top-level folders.',
-            parameters: {
-              type: 'object',
-              properties: {
-                mimeType: { type: 'string', description: 'Use application/vnd.google-apps.folder to list folders' },
-                name: { type: 'string', description: 'Optional partial file/folder name' },
-                folderName: { type: 'string', description: 'Optional parent folder name' },
-                pageSize: { type: 'integer', minimum: 1, maximum: 200 }
-              }
-            }
-          },
-          {
-            type: 'function',
-            name: 'docs.read',
-            description: 'Read plain text from a Google Doc by name (optional folderName).',
-            parameters: {
-              type: 'object',
-              properties: {
-                docName: { type: 'string' },
-                folderName: { type: 'string' }
-              },
-              required: ['docName']
-            }
-          }
-        ]
-      }
-    };
+          'Your name is Nyx. Always start speaking English. ',
+      
+       
 
     // send the session update once, then wait to greet until we get session.updated
 dc.send(JSON.stringify(sessionUpdate));
@@ -369,51 +193,6 @@ log('[DC] session.update sent');
   console.warn('[DC] failed to send session.update', err);
 }
 }; // <-- end of dc.onopen
-
-// Unified message handler: supports both legacy function_call and new tool_call events
-dc.onmessage = (evt) => {
-  log('[DC msg raw]', evt.data);
-
-  let msg;
-  try { msg = JSON.parse(evt.data); }
-  catch { /* non-JSON like audio frames */ return; }
-
-  const t = msg.type;
-
-  // Streamed tool-call argument chunks (old + new event names)
-  const isDelta =
-    t === 'response.function_call_arguments.delta' ||
-    t === 'response.function_call.arguments.delta' ||
-    t === 'response.tool_call.delta' ||
-    t === 'response.tool_call.arguments.delta';
-
-  const isDone =
-    t === 'response.function_call_arguments.done' ||
-    t === 'response.function_call.completed' ||
-    t === 'response.tool_call.completed' ||
-    t === 'response.tool_call.arguments.done';
-
-  if (isDelta) {
-    const id = msg.call_id || msg.id;
-    const frag =
-      (typeof msg.delta === 'string' ? msg.delta :
-      (typeof msg.arguments === 'string' ? msg.arguments : ''));
-    toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
-    return;
-  }
-
-  if (isDone) {
-    const id = msg.call_id || msg.id;
-    const name = msg.name || msg.tool_name; // support both shapes
-    const argsStr =
-      (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
-    delete toolArgBuf[id];
-
-    let args = {};
-    try { args = JSON.parse(argsStr); } catch {}
-    handleToolCall(name, args, id); // your existing dispatcher
-    return;
-  }
 
   if (t === 'session.updated') {
     log('[DC] session.updated');
