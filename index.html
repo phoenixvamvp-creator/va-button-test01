@@ -362,53 +362,79 @@
       }
     };
 
-    dc.send(JSON.stringify(sessionUpdate));
-    log('[DC] session.update sent');
-  } catch (err) {
-    console.warn('[DC] failed to send session.update', err);
+    // send the session update once, then wait to greet until we get session.updated
+dc.send(JSON.stringify(sessionUpdate));
+log('[DC] session.update sent');
+} catch (err) {
+  console.warn('[DC] failed to send session.update', err);
+}
+}; // <-- end of dc.onopen
+
+// Buffer for streamed tool-call arguments (add once)
+const toolArgBuf = {};
+
+// Unified message handler: supports both legacy function_call and new tool_call events
+dc.onmessage = (evt) => {
+  log('[DC msg raw]', evt.data);
+
+  let msg;
+  try { msg = JSON.parse(evt.data); }
+  catch { /* non-JSON like audio frames */ return; }
+
+  const t = msg.type;
+
+  // Streamed tool-call argument chunks (old + new event names)
+  const isDelta =
+    t === 'response.function_call_arguments.delta' ||
+    t === 'response.function_call.arguments.delta' ||
+    t === 'response.tool_call.delta' ||
+    t === 'response.tool_call.arguments.delta';
+
+  const isDone =
+    t === 'response.function_call_arguments.done' ||
+    t === 'response.function_call.completed' ||
+    t === 'response.tool_call.completed' ||
+    t === 'response.tool_call.arguments.done';
+
+  if (isDelta) {
+    const id = msg.call_id || msg.id;
+    const frag =
+      (typeof msg.delta === 'string' ? msg.delta :
+      (typeof msg.arguments === 'string' ? msg.arguments : ''));
+    toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
+    return;
+  }
+
+  if (isDone) {
+    const id = msg.call_id || msg.id;
+    const name = msg.name || msg.tool_name; // support both shapes
+    const argsStr =
+      (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
+    delete toolArgBuf[id];
+
+    let args = {};
+    try { args = JSON.parse(argsStr); } catch {}
+    handleToolCall(name, args, id); // your existing dispatcher
+    return;
+  }
+
+  if (t === 'session.updated') {
+    log('[DC] session.updated');
+    // Send the greeting AFTER the update to avoid racing with defaults
+    if (!window.__greeted) {
+      window.__greeted = true;
+      dc.send(JSON.stringify({
+        type: 'response.create',
+        response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' }
+      }));
+    }
+    return;
+  }
+
+  if (t === 'error' || t === 'response.error' || t === 'session.error') {
+    console.warn('[DC error]', msg);
   }
 };
-            dc.send(JSON.stringify(sessionUpdate));
-            dc.send(JSON.stringify({ type: 'response.create', response: { instructions: 'Hello! Nyx is ready with Google Drive tools.' } }));
-          } catch (e) { log('[DC] session.update error:', e?.message || e); }
-        };
-
-        dc.onmessage = (evt) => {
-          log('[DC msg raw]', evt.data);
-          let msg;
-          try { msg = JSON.parse(evt.data); }
-          catch { log('[EVT raw]', evt.data?.slice?.(0, 400) || evt.data); return; }
-
-          const isDelta =
-            msg.type === 'response.function_call_arguments.delta' ||
-            msg.type === 'response.function_call.arguments.delta';
-
-          const isDone =
-            msg.type === 'response.function_call_arguments.done' ||
-            msg.type === 'response.function_call.completed';
-
-          if (isDelta) {
-            const id = msg.call_id || msg.id;
-            const frag =
-              (typeof msg.delta === 'string' ? msg.delta :
-              (typeof msg.arguments === 'string' ? msg.arguments : ''));
-            toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
-            return;
-          }
-
-          if (isDone) {
-            const id = msg.call_id || msg.id;
-            const name = msg.name;
-            const argsStr =
-              (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
-            delete toolArgBuf[id];
-
-            let args = {};
-            try { args = JSON.parse(argsStr); } catch {}
-            handleToolCall(name, args, id);
-            return;
-          }
-        };
 
         dc.onerror = (e) => log('[DC] error', e);
         dc.onclose = () => { log('[DC] closed'); setSendReady(false); setStatus('disconnected'); };
