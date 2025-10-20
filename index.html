@@ -123,7 +123,7 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-        btnGoogle.addEventListener('click', () => {
+    btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
 
@@ -172,52 +172,56 @@
         dc = pc.createDataChannel('oai-events');
 
         dc.onopen = () => {
-  log('[DC] open');
-  setSendReady(true);
-  setStatus('ready');
+          log('[DC] open');
+          setSendReady(true);
+          setStatus('ready');
 
-  try {
-    const sessionUpdate = {
-      type: 'session.update',
-      session: {
-        voice: 'cedar',
-        instructions:
-          'Your name is Nyx. Always start speaking English. ',
-      }
-    }
-  };       
+          try {
+            // Instructions-only update to ensure the session applies custom behavior before any other settings.
+            const sessionUpdate = {
+              type: 'session.update',
+              session: {
+                voice: 'cedar',
+                instructions:
+                  'Your name is Nyx. Always start speaking English. Be friendly and helpful. '
+              }
+            };
+            log('[DEBUG] sessionUpdate payload:', JSON.stringify(sessionUpdate));
+            dc.send(JSON.stringify(sessionUpdate));
+            log('[DC] session.update sent');
+          } catch (err) {
+            console.warn('[DC] failed to send session.update', err);
+          }
+        };
 
-    // send the session update once, then wait to greet until we get session.updated
-dc.send(JSON.stringify(sessionUpdate));
-log('[DC] session.update sent');
-} catch (err) {
-  console.warn('[DC] failed to send session.update', err);
-}
-}; // <-- end of dc.onopen
+        // Minimal event handler: confirm updates and surface errors
+        dc.onmessage = (evt) => {
+          let msg;
+          try { msg = JSON.parse(evt.data); } catch { return; }
 
-  dc.onmessage = (evt) => {
-  let msg;
-  try { msg = JSON.parse(evt.data); } catch { return; }
-  if (msg.type === 'session.updated') {
-    log('[DC] session.updated');
-    if (!window.__greeted) {
-      window.__greeted = true;
-      dc.send(JSON.stringify({
-        type: 'response.create',
-        response: { instructions: 'Hello! Nyx is ready.' }
-      }));
-    }
-    return;
-  }
-  if (msg.type === 'error' || msg.type === 'response.error' || msg.type === 'session.error') {
-    console.warn('[DC error]', msg);
-  }
-};
+          if (msg.type === 'session.updated') {
+            log('[DC] session.updated');
+            // Greet only after the update is applied so the first reply uses your instructions.
+            if (!window.__greeted) {
+              window.__greeted = true;
+              dc.send(JSON.stringify({
+                type: 'response.create',
+                response: { instructions: 'Hello! Nyx is ready.' }
+              }));
+            }
+            return;
+          }
 
-  if (t === 'error' || t === 'response.error' || t === 'session.error') {
-    console.warn('[DC error]', msg);
-  }
-};
+          if (msg.type === 'error' || msg.type === 'response.error' || msg.type === 'session.error') {
+            console.warn('[DC error]', msg);
+            return;
+          }
+
+          // Optional: log other events at a low level for debugging
+          if (msg?.type) {
+            log('[DC msg]', msg.type);
+          }
+        };
 
         dc.onerror = (e) => log('[DC] error', e);
         dc.onclose = () => { log('[DC] closed'); setSendReady(false); setStatus('disconnected'); };
@@ -234,7 +238,10 @@ log('[DC] session.update sent');
         });
         const answer = await res.text();
         log('[HTTP] /api/realtime/offer →', res.status);
-        if (!res.ok) { try { log('[ERR]', JSON.parse(answer)); } catch { log('[ERR]', answer); } throw new Error('Offer→Answer failed'); }
+        if (!res.ok) {
+          try { log('[ERR]', JSON.parse(answer)); } catch { log('[ERR]', answer); }
+          throw new Error('Offer→Answer failed');
+        }
 
         await pc.setRemoteDescription({ type: 'answer', sdp: answer });
         setStatus('connected — waiting for channel…');
