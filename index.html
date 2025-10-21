@@ -150,7 +150,7 @@
             const p = await navigator.permissions.query({ name: 'microphone' });
             log('[PERM] microphone:', p.state);
           }
-        } catch {}
+        } catch (e) {}
 
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mic = stream;
