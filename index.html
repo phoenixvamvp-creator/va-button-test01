@@ -234,13 +234,6 @@ dc.onmessage = (evt) => {
   }
 };
 
-
-          // Optional: log other events at a low level for debugging
-          if (msg?.type) {
-            log('[DC msg]', msg.type);
-          }
-        };
-
         dc.onerror = (e) => log('[DC] error', e);
         dc.onclose = () => { log('[DC] closed'); setSendReady(false); setStatus('disconnected'); };
 
