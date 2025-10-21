@@ -171,51 +171,69 @@
 
         dc = pc.createDataChannel('oai-events');
 
-        dc.onopen = () => {
-          log('[DC] open');
-          setSendReady(true);
-          setStatus('ready');
+let sessionIsCreated = false;
+let sessionIsUpdated = false;
 
-          try {
-            // Instructions-only update to ensure the session applies custom behavior before any other settings.
-            const sessionUpdate = {
-              type: 'session.update',
-              session: {
-                voice: 'cedar',
-                instructions:
-                  'Your name is Nyx. Always start speaking English. Be friendly and helpful. '
-              }
-            };
-            log('[DEBUG] sessionUpdate payload:', JSON.stringify(sessionUpdate));
-            dc.send(JSON.stringify(sessionUpdate));
-            log('[DC] session.update sent');
-          } catch (err) {
-            console.warn('[DC] failed to send session.update', err);
-          }
-        };
+dc.onopen = () => {
+  log('[DC] open');
+  setSendReady(true);
+  setStatus('waiting-for-session'); // not 'ready' yet
+};
 
-        // Minimal event handler: confirm updates and surface errors
-        dc.onmessage = (evt) => {
-          let msg;
-          try { msg = JSON.parse(evt.data); } catch { return; }
+dc.onmessage = (evt) => {
+  let msg;
+  try { msg = JSON.parse(evt.data); } catch { return; }
 
-          if (msg.type === 'session.updated') {
-            log('[DC] session.updated');
-            // Greet only after the update is applied so the first reply uses your instructions.
-            if (!window.__greeted) {
-              window.__greeted = true;
-              dc.send(JSON.stringify({
-                type: 'response.create',
-                response: { instructions: 'Hello! Nyx is ready.' }
-              }));
-            }
-            return;
-          }
+  // Log *everything* to see errors and flow
+  log('[DC<=]', msg);
 
-          if (msg.type === 'error' || msg.type === 'response.error' || msg.type === 'session.error') {
-            console.warn('[DC error]', msg);
-            return;
-          }
+  if (msg.type === 'session.created') {
+    sessionIsCreated = true;
+
+    // Now it's safe to apply instructions
+    const sessionUpdate = {
+      type: 'session.update',
+      session: {
+        // pick a known-good voice to avoid silent failure
+        voice: 'alloy',
+        // your instructions
+        instructions:
+          'Your name is Nyx. Always speak English. Be concise, factual, and avoid flattery.'
+      }
+    };
+    dc.send(JSON.stringify(sessionUpdate));
+    log('[DC=>] session.update sent');
+
+    return;
+  }
+
+  if (msg.type === 'session.updated') {
+    sessionIsUpdated = true;
+    setStatus('ready');
+
+    if (!window.__greeted) {
+      window.__greeted = true;
+      // First reply only after update is confirmed
+      dc.send(JSON.stringify({
+        type: 'response.create',
+        response: {
+          // ensure audio/text as needed; omit if you only need text
+          // modalities: ['audio', 'text'],
+          instructions: 'Hello! Nyx is ready.'
+        }
+      }));
+      log('[DC=>] response.create (greeting)');
+    }
+    return;
+  }
+
+  if (msg.type === 'error') {
+    console.error('[Realtime ERROR]', msg.error || msg);
+    setStatus('error');
+    return;
+  }
+};
+
 
           // Optional: log other events at a low level for debugging
           if (msg?.type) {
