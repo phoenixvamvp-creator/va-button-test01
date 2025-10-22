@@ -196,6 +196,15 @@ dc.onmessage = (evt) => {
       session: {
         // pick a known-good voice to avoid silent failure
         voice: 'alloy',
+        turn_detection: {
+      type: 'server_vad',
+      threshold: 0.7,
+      prefix_padding_ms: 400,
+      silence_duration_ms: 900,
+      idle_timeout_ms: 10000,
+      create_response: true,
+      interrupt_response: true
+    },
         // your instructions
         instructions:
           'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
