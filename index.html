@@ -243,6 +243,98 @@ dc.onmessage = (evt) => {
         }
       }));
       log('[DC=>] response.create (greeting)');
+
+    // Register Docs tools AFTER instructions are applied
+if (!window.__toolsRegistered) {
+  window.__toolsRegistered = true;
+
+  // Persistent buffer for streamed tool-call arguments
+  window.toolArgBuf = Object.create(null);
+
+  // Dispatcher: routes tool calls to your backend
+  window.handleToolCall = async function handleToolCall(name, args, callId) {
+    try {
+      let url = '', body = {};
+
+      if (name === 'docs_read') {
+        url = '/api/workspace.js?action=docs.read';
+        body = {
+          docName: args.docName || '',
+          folderName: args.folderName || ''
+        };
+      } else if (name === 'docs_createappend') {
+        url = '/api/workspace.js?action=docs.createappend';
+        body = {
+          docName: args.docName || '',
+          folderName: args.folderName || '',
+          text: (args.text ?? '').toString()
+        };
+      } else {
+        const out = { error: `Unsupported tool: ${name}` };
+        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+        dc.send(JSON.stringify({ type: 'response.create' }));
+        return;
+      }
+
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+
+      const text = await r.text();
+      log('[TOOL]', name, r.status, text.slice(0, 400));
+      dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
+      dc.send(JSON.stringify({ type: 'response.create' }));
+    } catch (e) {
+      const out = { error: String(e?.message || e) };
+      dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+      dc.send(JSON.stringify({ type: 'response.create' }));
+    }
+  };
+
+  // Register just the Docs tools
+  const toolsUpdate = {
+    type: 'session.update',
+    session: {
+      tool_choice: 'auto',
+      tools: [
+        {
+          type: 'function',
+          name: 'docs_read',
+          description: 'Read a Google Doc by name (optional folderName). Returns contents.',
+          parameters: {
+            type: 'object',
+            properties: {
+              docName: { type: 'string', description: 'Document name to read' },
+              folderName: { type: 'string', description: 'Optional parent folder; omit for root' }
+            },
+            required: ['docName']
+          }
+        },
+        {
+          type: 'function',
+          name: 'docs_createappend',
+          description: 'Create a Doc in root (or optional folder) if missing, then append text to it.',
+          parameters: {
+            type: 'object',
+            properties: {
+              docName: { type: 'string', description: 'Target document name' },
+              folderName: { type: 'string', description: 'Optional parent folder; omit for root' },
+              text: { type: 'string', description: 'Text to append (newline is added if missing)' }
+            },
+            required: ['docName', 'text']
+          }
+        }
+      ]
+    }
+  };
+
+  dc.send(JSON.stringify(toolsUpdate));
+  log('[DC=>] tools session.update (Docs) sent');
+}
+      
     }
     return;
   }
