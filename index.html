@@ -123,53 +123,7 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-    // Buffer for streamed tool-call JSON argument chunks
-const toolArgBuf = Object.create(null);
-
-// Dispatch tool calls to your backend
-async function handleToolCall(name, args, callId) {
-  try {
-    let url = '', body = {};
-
-    if (name === 'docs_read') {
-      url = '/api/workspace.js?action=docs.read';
-      body = {
-        docName: args.docName || '',
-        folderName: args.folderName || ''
-      };
-    } else if (name === 'docs_createappend') {
-      url = '/api/workspace.js?action=docs.createappend';
-      body = {
-        docName: args.docName || '',
-        folderName: args.folderName || '',
-        text: (args.text ?? '').toString()
-      };
-    } else {
-      const out = { error: `Unsupported tool: ${name}` };
-      dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-      dc?.send(JSON.stringify({ type: 'response.create' }));
-      return;
-    }
-
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(body)
-    });
-
-    const text = await r.text();
-    log('[TOOL]', name, r.status, text.slice(0, 400));
-    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
-    dc?.send(JSON.stringify({ type: 'response.create' }));
-  } catch (e) {
-    const out = { error: String(e?.message || e) };
-    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-    dc?.send(JSON.stringify({ type: 'response.create' }));
-  }
-}
-
-    btnGoogle.addEventListener('click', () => {
+       btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
 
@@ -320,6 +274,52 @@ if (isDone) {
         }
       }));
       log('[DC=>] response.create (greeting)');
+
+       // Buffer for streamed tool-call JSON argument chunks
+const toolArgBuf = Object.create(null);
+
+// Dispatch tool calls to your backend
+async function handleToolCall(name, args, callId) {
+  try {
+    let url = '', body = {};
+
+    if (name === 'docs_read') {
+      url = '/api/workspace.js?action=docs.read';
+      body = {
+        docName: args.docName || '',
+        folderName: args.folderName || ''
+      };
+    } else if (name === 'docs_createappend') {
+      url = '/api/workspace.js?action=docs.createappend';
+      body = {
+        docName: args.docName || '',
+        folderName: args.folderName || '',
+        text: (args.text ?? '').toString()
+      };
+    } else {
+      const out = { error: `Unsupported tool: ${name}` };
+      dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+      dc?.send(JSON.stringify({ type: 'response.create' }));
+      return;
+    }
+
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
+    });
+
+    const text = await r.text();
+    log('[TOOL]', name, r.status, text.slice(0, 400));
+    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
+    dc?.send(JSON.stringify({ type: 'response.create' }));
+  } catch (e) {
+    const out = { error: String(e?.message || e) };
+    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
+    dc?.send(JSON.stringify({ type: 'response.create' }));
+  }
+}
 
       // Register Docs tools once, after the update is applied
 if (!window.__toolsRegistered) {
