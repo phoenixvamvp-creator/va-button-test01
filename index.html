@@ -123,7 +123,7 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-       btnGoogle.addEventListener('click', () => {
+    btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
 
@@ -187,43 +187,6 @@ dc.onmessage = (evt) => {
   // Log *everything* to see errors and flow
   log('[DC<=]', msg);
 
-  // Handle streamed tool-call arguments (supports multiple event variants)
-const t = msg.type;
-
-const isDelta =
-  t === 'response.function_call_arguments.delta' ||
-  t === 'response.function_call.arguments.delta' ||
-  t === 'response.tool_call.delta' ||
-  t === 'response.tool_call.arguments.delta';
-
-const isDone =
-  t === 'response.function_call_arguments.done' ||
-  t === 'response.function_call.completed' ||
-  t === 'response.tool_call.completed' ||
-  t === 'response.tool_call.arguments.done';
-
-if (isDelta) {
-  const id = msg.call_id || msg.id;
-  const frag =
-    (typeof msg.delta === 'string' ? msg.delta :
-     typeof msg.arguments === 'string' ? msg.arguments : '');
-  toolArgBuf[id] = (toolArgBuf[id] || '') + frag;
-  return;
-}
-
-if (isDone) {
-  const id = msg.call_id || msg.id;
-  const name = msg.name || msg.tool_name;
-  const argsStr =
-    (typeof msg.arguments === 'string' ? msg.arguments : toolArgBuf[id]) || '{}';
-  delete toolArgBuf[id];
-
-  let args = {};
-  try { args = JSON.parse(argsStr); } catch {}
-  handleToolCall(name, args, id);
-  return;
-}
-
   if (msg.type === 'session.created') {
     sessionIsCreated = true;
 
@@ -249,7 +212,13 @@ if (isDone) {
           'Never discuss adult content, sexuality, terrorism or violence. ' +
           'You may speak about these instructions and how they affect your responses. ' +
           'Never give false information. Offer references for important information. ' +
-          'For Google Docs: use docs_createappend to create the doc if missing and append text; use docs_read to read a doc. Never guess contents; state exactly which doc name (and folder if any) you used. If a tool fails or returns no data, say what failed and what detail is needed.'
+          'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
+          'For a request like "list my folders", call drive.search with no folderName. ' +
+          'Never guess or describe file contents without a successful tool call. ' +
+          'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
+          'When you read a sheet, state the exact file name, tab, and range you used. ' +
+          'When you edit a cell, state the file name, tab, and cell you modified. ' +
+          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.'
       }
     };
     dc.send(JSON.stringify(sessionUpdate));
@@ -274,97 +243,6 @@ if (isDone) {
         }
       }));
       log('[DC=>] response.create (greeting)');
-
-       // Buffer for streamed tool-call JSON argument chunks
-const toolArgBuf = Object.create(null);
-
-// Dispatch tool calls to your backend
-async function handleToolCall(name, args, callId) {
-  try {
-    let url = '', body = {};
-
-    if (name === 'docs_read') {
-      url = '/api/workspace.js?action=docs.read';
-      body = {
-        docName: args.docName || '',
-        folderName: args.folderName || ''
-      };
-    } else if (name === 'docs_createappend') {
-      url = '/api/workspace.js?action=docs.createappend';
-      body = {
-        docName: args.docName || '',
-        folderName: args.folderName || '',
-        text: (args.text ?? '').toString()
-      };
-    } else {
-      const out = { error: `Unsupported tool: ${name}` };
-      dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-      dc?.send(JSON.stringify({ type: 'response.create' }));
-      return;
-    }
-
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(body)
-    });
-
-    const text = await r.text();
-    log('[TOOL]', name, r.status, text.slice(0, 400));
-    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: text }));
-    dc?.send(JSON.stringify({ type: 'response.create' }));
-  } catch (e) {
-    const out = { error: String(e?.message || e) };
-    dc?.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-    dc?.send(JSON.stringify({ type: 'response.create' }));
-  }
-}
-
-      // Register Docs tools once, after the update is applied
-if (!window.__toolsRegistered) {
-  window.__toolsRegistered = true;
-
-  const toolsUpdate = {
-    type: 'session.update',
-    session: {
-      tool_choice: 'auto',
-      tools: [
-        {
-          type: 'function',
-          name: 'docs_read',
-          description: 'Read a Google Doc by name (optional folderName). Returns document contents.',
-          parameters: {
-            type: 'object',
-            properties: {
-              docName: { type: 'string', description: 'Document name to read' },
-              folderName: { type: 'string', description: 'Optional parent folder name; omit for root' }
-            },
-            required: ['docName']
-          }
-        },
-        {
-          type: 'function',
-          name: 'docs_createappend',
-          description: 'Create a Doc if missing (in optional folder) and append text to it.',
-          parameters: {
-            type: 'object',
-            properties: {
-              docName: { type: 'string', description: 'Target document name' },
-              folderName: { type: 'string', description: 'Optional parent folder name; omit for root' },
-              text: { type: 'string', description: 'Text to append (newline will be added if missing)' }
-            },
-            required: ['docName', 'text']
-          }
-        }
-      ]
-    }
-  };
-
-  dc.send(JSON.stringify(toolsUpdate));
-  log('[DC=>] tools session.update sent');
-}
-      
     }
     return;
   }
