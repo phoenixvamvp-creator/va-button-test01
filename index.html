@@ -262,7 +262,8 @@ dc.onmessage = (evt) => {
           instructions: 'Hello! Nyx is ready.'
         }
       }));
-      log('[DC=>] response.create (greeting)');
+      log('[DC=>] response.create (greeting)')
+    }
 
     // Register Docs tools AFTER instructions are applied
 if (!window.__toolsRegistered) {
@@ -359,6 +360,52 @@ if (!window.__toolsRegistered) {
     return;
   }
 
+   // Handle streamed tool-call arguments (only after tools are registered)
+{
+  const t = msg.type;
+
+  const isDelta =
+    t === 'response.function_call_arguments.delta' ||
+    t === 'response.function_call.arguments.delta' ||
+    t === 'response.tool_call.delta' ||
+    t === 'response.tool_call.arguments.delta';
+
+  const isDone =
+    t === 'response.function_call_arguments.done' ||
+    t === 'response.function_call.completed' ||
+    t === 'response.tool_call.completed' ||
+    t === 'response.tool_call.arguments.done';
+
+  if ((isDelta || isDone) && !window.__toolsRegistered) {
+    // Ignore any early tool-call fragments until tools are registered
+    return;
+  }
+
+  if (isDelta) {
+    const id = msg.call_id || msg.id;
+    const frag =
+      (typeof msg.delta === 'string' ? msg.delta :
+       typeof msg.arguments === 'string' ? msg.arguments : '');
+    window.toolArgBuf = window.toolArgBuf || Object.create(null);
+    window.toolArgBuf[id] = (window.toolArgBuf[id] || '') + frag;
+    return;
+  }
+
+  if (isDone) {
+    const id = msg.call_id || msg.id;
+    const name = msg.name || msg.tool_name;
+    const argsStr =
+      (typeof msg.arguments === 'string' ? msg.arguments : (window.toolArgBuf ? window.toolArgBuf[id] : '')) || '{}';
+    if (window.toolArgBuf) delete window.toolArgBuf[id];
+
+    let args = {};
+    try { args = JSON.parse(argsStr); } catch {}
+    if (typeof window.handleToolCall === 'function') {
+      window.handleToolCall(name, args, id);
+    }
+    return;
+  }
+}     
   if (msg.type === 'error') {
     console.error('[Realtime ERROR]', msg.error || msg);
     setStatus('error');
