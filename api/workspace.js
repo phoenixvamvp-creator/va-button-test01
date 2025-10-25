@@ -206,31 +206,56 @@ async function actDriveSearch(req, res, tokens) {
 
 async function actDocsRead(req, res, tokens) {
   const b = parseBody(req);
-  const docName = (b.docName || '').toString().trim();
-  const folderName = (b.folderName || '').toString().trim();
-  if (!docName) return json(res, 400, { error: 'docName is required' });
+  const docId = (b.docId || '').toString().trim();
+const docName = (b.docName || '').toString().trim();
+const folderName = (b.folderName || '').toString().trim();
+if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
 
+  clet file = null;
+let targetId = docId;
+
+if (!targetId) {
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  const file = await resolveFileByName(tokens, req, res, {
+  const f = await resolveFileByName(tokens, req, res, {
     name: docName, mimeType: 'application/vnd.google-apps.document', folderId
   });
-  if (!file) return json(res, 404, { error: `No document found for '${docName}'.` });
+  if (!f) return json(res, 404, { error: `No document found for '${docName}'.` });
+  file = f;
+  targetId = f.id;
+} else {
+  file = { id: targetId, name: docName || undefined };
+}
 
-  const r = await withRefresh(tokens, res, req, t => docsGet(t, file.id));
-  if (!r.ok) return json(res, r.status, { error: 'Docs read failed', details: r.data });
-  return json(res, 200, { ok: true, file, document: r.data });
+const r = await withRefresh(tokens, res, req, t => docsGet(t, targetId));
+if (!r.ok) return json(res, r.status, { error: 'Docs read failed', details: r.data });
+
+const text = extractPlainTextFromDoc(r.data);
+return json(res, 200, { ok: true, file, text, wordCount: text.length });
+
 }
 
 async function actDocsCreateAppend(req, res, tokens) {
   const b = parseBody(req);
-  const docName = (b.docName || '').toString().trim();
-  const folderName = (b.folderName || '').toString().trim();
-  const text = (b.text || '').toString();
-  if (!docName) return json(res, 400, { error: 'docName is required' });
-  if (!text) return json(res, 400, { error: 'text is required' });
+  const docId = (b.docId || '').toString().trim();
+const docName = (b.docName || '').toString().trim();
+const folderName = (b.folderName || '').toString().trim();
+const mode = ((b.mode || 'append') + '').toLowerCase();
+const text = (b.text || '').toString();
 
+if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
+if (!text) return json(res, 400, { error: 'text is required' });
+if (mode !== 'append' && mode !== 'replace') return json(res, 400, { error: 'invalid mode; use append or replace' });
+
+
+  let file;
+
+if (docId) {
+  // Use the provided ID directly
+  file = { id: docId, name: docName || undefined };
+} else {
+  // Find by name (optionally inside folder), or create if missing
   const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  let file = await resolveFileByName(tokens, req, res, {
+  file = await resolveFileByName(tokens, req, res, {
     name: docName, mimeType: 'application/vnd.google-apps.document', folderId
   });
 
@@ -239,14 +264,25 @@ async function actDocsCreateAppend(req, res, tokens) {
     if (!created.ok) return json(res, created.status, { error: 'Doc create failed', details: created.data });
     file = { id: created.data.id, name: docName };
   }
+}
 
-  const append = await withRefresh(tokens, res, req, t =>
-    docsBatchUpdate(t, file.id, [
-      { insertText: { endOfSegmentLocation: {}, text: text.endsWith('\n') ? text : text + '\n' } }
-    ])
-  );
-  if (!append.ok) return json(res, append.status, { error: 'Doc append failed', details: append.data });
-  return json(res, 200, { ok: true, doc: file });
+
+  let requests;
+if (mode === 'replace') {
+  requests = [
+    { deleteContentRange: { range: { segmentId: null, startIndex: 1, endIndex: -1 } } },
+    { insertText: { location: { index: 1 }, text } }
+  ];
+} else {
+  requests = [
+    { insertText: { endOfSegmentLocation: {}, text: text.endsWith('\n') ? text : text + '\n' } }
+  ];
+}
+
+const writeResp = await withRefresh(tokens, res, req, t => docsBatchUpdate(t, file.id, requests));
+if (!writeResp.ok) return json(res, writeResp.status, { error: 'Doc write failed', details: writeResp.data });
+return json(res, 200, { ok: true, doc: file, mode });
+
 }
 
 async function actSheetsRead(req, res, tokens) {
