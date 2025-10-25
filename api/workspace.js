@@ -211,7 +211,7 @@ const docName = (b.docName || '').toString().trim();
 const folderName = (b.folderName || '').toString().trim();
 if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
 
-  clet file = null;
+  let file = null;
 let targetId = docId;
 
 if (!targetId) {
