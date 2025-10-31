@@ -263,7 +263,7 @@ dc.onmessage = (evt) => {
           instructions: 'Hello! Nyx is ready.'
         }
       }));
-      log('[DC=>] response.create (greeting)')
+      log('[DC=>] response.create (greeting)');
     }
 
     // Register Docs tools AFTER instructions are applied
@@ -291,12 +291,17 @@ if (!window.__toolsRegistered) {
           folderName: args.folderName || '',
           text: (args.text ?? '').toString()
         };
-      } else {
-        const out = { error: `Unsupported tool: ${name}` };
-        dc.send(JSON.stringify({ type: 'tool.output', tool_call_id: callId, output: JSON.stringify(out) }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
+          } else {
+        const out = { error: Unsupported tool: ${name} };
+        if (dc && dc.readyState === 'open') {dc.send(JSON.stringify({type: 'response.create',  response: { tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }] }
+        }));
+        dc.send(JSON.stringify({ 
+        type: 'response.create' }));
+        } else {
+        log('[WARN] DC not open; dropping tool output (unsupported):', out);
+        }
         return;
-      }
+        }
 
       const r = await fetch(url, {
         method: 'POST',
@@ -307,8 +312,15 @@ if (!window.__toolsRegistered) {
 
       const text = await r.text();
       log('[TOOL]', name, r.status, text.slice(0, 400));
-      dc.send(JSON.stringify({ type: 'response.create', response: { tool_outputs: [{ tool_call_id: callId, output: text }] } }));
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ type: 'response.create', response: { tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }] } }));
       dc.send(JSON.stringify({ type: 'response.create' }));
+      } else {
+      log('[WARN] DC not open; dropping tool output (error):', out);
+      }
+      } else {
+      log('[WARN] DC not open; dropping tool output (success).');
+      }
     } catch (e) {
       const out = { error: String(e?.message || e) };
       dc.send(JSON.stringify({ type: 'response.create', response: { tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }] } }));
