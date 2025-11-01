@@ -384,7 +384,8 @@ async function actDriveListRoot(req, res, tokens) {
     if (action === 'sheets.read')       return await actSheetsRead(req, res, tokens);
     if (action === 'sheets.appendrow')  return await actSheetsAppendRow(req, res, tokens);
     if (action === 'sheets.updatecell') return await actSheetsUpdateCell(req, res, tokens);
-
+    if (action === 'drive.listroot')   return await actDriveListRoot(req, res, tokens);
+    
     return json(res, 400, {
       error: 'Unknown or missing action.',
       allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell']
