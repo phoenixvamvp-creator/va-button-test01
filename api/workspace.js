@@ -369,6 +369,14 @@ export default async function handler(req, res) {
   };
   const action = alias[raw] || raw;
 
+async function actDriveListRoot(req, res, tokens) {
+  const out = await withRefresh(tokens, res, req, t =>
+    driveSearch(t, "'root' in parents and trashed = false", "files(id,name,mimeType,modifiedTime)", 200)
+  );
+  if (!out.ok) return json(res, out.status, { error: 'Drive root list failed', details: out.data });
+  return json(res, 200, { ok: true, files: out.data.files || [] });
+}
+  
   try {
     if (action === 'drive.search')      return await actDriveSearch(req, res, tokens);
     if (action === 'docs.read')         return await actDocsRead(req, res, tokens);
