@@ -123,6 +123,83 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
+    // Response state management
+    // __responseActive: whether we have created a response that is currently active
+    // __waitingForResponseId: we created a response and are waiting for server to send response.created to capture id
+    // __lastResponseCreatedId: the server-assigned response id (used to match done events)
+    // __pendingToolResults: queue of tool results that arrived while a response was active
+    window.__responseActive = false;
+    window.__waitingForResponseId = false;
+    window.__lastResponseCreatedId = null;
+    window.__pendingToolResults = [];
+
+    // Safety fallback: clear responseActive after this timeout (ms) if not cleared by server events
+    const RESPONSE_ACTIVE_FALLBACK_MS = 12000;
+    let __responseActiveFallbackTimer = null;
+    function setResponseActive(active) {
+      window.__responseActive = !!active;
+      if (active) {
+        // start fallback timer to avoid permanent lock
+        clearTimeout(__responseActiveFallbackTimer);
+        __responseActiveFallbackTimer = setTimeout(() => {
+          if (window.__responseActive) {
+            log('[WARN] responseActive fallback fired; clearing flag');
+            window.__responseActive = false;
+            window.__waitingForResponseId = false;
+            window.__lastResponseCreatedId = null;
+            flushPendingToolResults();
+          }
+        }, RESPONSE_ACTIVE_FALLBACK_MS);
+      } else {
+        clearTimeout(__responseActiveFallbackTimer);
+        __responseActiveFallbackTimer = null;
+      }
+    }
+
+    async function sendResponseInstructions(text) {
+      if (!dc || dc.readyState !== 'open') {
+        log('[WARN] DC not open; cannot send response.create');
+        return;
+      }
+      if (window.__responseActive) {
+        // Queue the result to send once current response completes
+        window.__pendingToolResults.push({ text });
+        log('[INFO] response active — queued tool result');
+        return;
+      }
+      try {
+        window.__waitingForResponseId = true;
+        setResponseActive(true);
+        // send single response.create with instructions; do NOT send a second empty create
+        dc.send(JSON.stringify({
+          type: 'response.create',
+          response: { instructions: text }
+        }));
+        log('[DC=>] response.create (tool output sent)');
+      } catch (e) {
+        log('[ERR] sendResponseInstructions send failed:', e?.message || e);
+        // if send fails, clear active to avoid lock
+        setResponseActive(false);
+        window.__waitingForResponseId = false;
+      }
+    }
+
+    function flushPendingToolResults() {
+      if (!dc || dc.readyState !== 'open') {
+        log('[WARN] DC not open; cannot flush pending tool results');
+        return;
+      }
+      if (window.__responseActive) {
+        log('[INFO] still response active; will flush later');
+        return;
+      }
+      const item = window.__pendingToolResults.shift();
+      if (item) {
+        log('[INFO] flushing queued tool result');
+        sendResponseInstructions(item.text);
+      }
+    }
+
     btnGoogle.addEventListener('click', () => {
       window.location.href = '/api/google.js?op=start';
     });
@@ -182,19 +259,64 @@
 
         dc.onmessage = (evt) => {
           let msg;
-          try { msg = JSON.parse(evt.data); } catch { return; }
+          try { msg = JSON.parse(evt.data); } catch (e) { return; }
 
-          // Log *everything* to see errors and flow
           log('[DC<=]', msg);
 
+          // If the server reports a response created, capture id for matching done events
+          if (msg.type === 'response.created' && msg.response && msg.response.id) {
+            if (window.__waitingForResponseId) {
+              window.__lastResponseCreatedId = msg.response.id;
+              window.__waitingForResponseId = false;
+              log('[INFO] captured response id', window.__lastResponseCreatedId);
+            }
+          }
+
+          // Clear __responseActive when the response finishes (match by response id when available)
+          // Accept a few possible done/completed event names
+          if (msg.type === 'response.done' && msg.response_id) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+              setResponseActive(false);
+              window.__lastResponseCreatedId = null;
+              window.__waitingForResponseId = false;
+              log('[INFO] response.done -> cleared __responseActive');
+              // flush any queued tool results
+              flushPendingToolResults();
+            }
+          }
+          if (msg.type === 'response.completed' && msg.response_id) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+              setResponseActive(false);
+              window.__lastResponseCreatedId = null;
+              window.__waitingForResponseId = false;
+              log('[INFO] response.completed -> cleared __responseActive');
+              flushPendingToolResults();
+            }
+          }
+          if (msg.type === 'response.output_item.completed' && msg.response_id) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+              setResponseActive(false);
+              window.__lastResponseCreatedId = null;
+              window.__waitingForResponseId = false;
+              log('[INFO] response.output_item.completed -> cleared __responseActive');
+              flushPendingToolResults();
+            }
+          }
+
+          // Some servers emit output_item.added then later output_item.completed.
+          // If we see an output_item.added that clearly indicates final text/audio, we can optimistically clear.
+          if (msg.type === 'response.output_item.added' && msg.item && msg.item.type) {
+            // If item is an audio buffer stopped or final text piece, treat as progress; don't clear here unless status indicates completion
+            // We'll rely on the explicit completed/done events above.
+          }
+
+          // Session lifecycle
           if (msg.type === 'session.created') {
             sessionIsCreated = true;
 
-            // Now it's safe to apply instructions
             const sessionUpdate = {
               type: 'session.update',
               session: {
-                // pick a known-good voice to avoid silent failure
                 voice: 'alloy',
                 turn_detection: {
                   type: 'server_vad',
@@ -205,7 +327,6 @@
                   create_response: true,
                   interrupt_response: true
                 },
-                // your instructions
                 instructions:
                   'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
                   'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
@@ -219,22 +340,7 @@
                   'Keep responses concise and conversational to encourage natural exchange. Avoid delivering long monologues unless explicitly requested. Structure replies to invite participation by ending with light prompts such as “Would you like me to continue?” or “Shall I explain that part in more detail?”. ' +
                   'Always acknowledge what the user has said before moving forward. Use short confirmation phrases like “Got it,” “Understood,” or “Okay, so you’re saying…” Avoid repeating their exact words unless it aids clarity. Mirror the user’s tone, pacing, and communication style. Do not shift topics unless the user initiates it. ' +
                   'Only provide as much information as the user requests. Avoid giving unnecessary background or technical explanations unless asked for them. Never interrupt the user mid-sentence or mid-thought. Allow silence to exist naturally without trying to fill it. ' +
-                  'Leave room for pauses and natural rhythm in the conversation. After each statement, allow at least one second of space before assuming the user is finished processing or preparing their next thought. Keep speech and pacing natural — similar to how a thoughtful human would talk. ' +
-                  'When using real-time or voice-based interaction, implement silence-detection thresholds to manage turn-taking. Wait for approximately 1.2 seconds of continuous silence before beginning a response. Use a debounce buffer of around 300 milliseconds to confirm that the user has truly stopped speaking. If sound resumes, cancel the planned response immediately and listen again. ' +
-                  'When a question has multiple possible interpretations, first ask clarifying questions instead of assuming. If a topic is complex, provide a short summary first and then offer the detailed version only if the user asks for it. Example: “Here’s the short version first…” followed by “Would you like the full detail?”. ' +
-                  'Be truthful and objective. If information is uncertain, say so clearly rather than guessing. Avoid sugarcoating or self-congratulatory phrasing. Prioritize accuracy and trustworthiness over friendliness. The assistant should be candid, clear, and reliable. ' +
-                  'Adjust tone, energy, and pacing based on the user’s context. If the user is calm, remain calm. If the user is energized, match that energy without exaggeration. Avoid sarcasm, unnecessary humor, or emotional projection unless the user’s tone invites it. ' +
-                  'Do not drift into unrelated areas of conversation. Keep responses relevant to the last user input or the established topic unless the user signals a change. When switching topics, do so smoothly with a brief transitional acknowledgment such as, “Changing gears for a moment…”. ' +
-                  'Encourage input from the user with natural, unobtrusive questions like “Can you tell me a bit more about that?” Avoid giving a list of questions or steering the conversation aggressively. Keep prompts light and open-ended. ' +
-                  'When memory or context is active, use it naturally and sparingly. Reference prior information only when relevant to the conversation. Avoid repeating remembered facts unnecessarily or breaking conversational flow to show knowledge. ' +
-                  'If the assistant misinterprets something, acknowledge it immediately and correct course gracefully. Use short, professional phrasing such as, “Sorry, I misunderstood — could you rephrase that?” or “Let me clarify what I meant.”. ' +
-                  'Do not compliment or affirm the user in ways that sound manipulative or artificial. For example, avoid statements like “That’s brilliant!” unless genuinely context-appropriate. Focus instead on engaging the substance of what was said. ' +
-                  'Use simple, direct language. Avoid jargon unless it is already part of the user’s vocabulary or context. Structure sentences so that they flow naturally when spoken aloud — short, clear, and to the point. ' +
-                  'Before closing a response, consider adding a soft prompt to check whether the user wants to continue. Examples include “Does that make sense so far?” or “Would you like me to expand on that?” This ensures smooth conversational continuity. ' +
-                  'In voice output, vary rhythm and pacing slightly to avoid robotic tone. Insert natural micro-pauses between clauses (around 150–250 ms). Avoid back-to-back sentences that sound mechanically timed. Use human conversational rhythm as a reference. ' +
-                  'Throughout all interactions, aim for balanced professionalism — calm, confident, and personable. The assistant should sound like a helpful expert or conversational partner rather than a lecturer or cheerleader. Respectful, thoughtful, and focused on the task or discussion at hand. ' +
                   'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
-                  'For a request like "list my folders", call drive.search with no folderName. ' +
                   'Never guess or describe file contents without a successful tool call. ' +
                   'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
                   'When you read a sheet, state the exact file name, tab, and range you used. ' +
@@ -242,9 +348,12 @@
                   'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.'
               }
             };
-            dc.send(JSON.stringify(sessionUpdate));
-            log('[DC=>] session.update sent');
-
+            try {
+              dc.send(JSON.stringify(sessionUpdate));
+              log('[DC=>] session.update sent');
+            } catch (e) {
+              log('[ERR] sending session.update', e?.message || e);
+            }
             return;
           }
 
@@ -255,15 +364,15 @@
             if (!window.__greeted) {
               window.__greeted = true;
               // First reply only after update is confirmed
-              dc.send(JSON.stringify({
-                type: 'response.create',
-                response: {
-                  // ensure audio/text as needed; omit if you only need text
-                  // modalities: ['audio', 'text'],
-                  instructions: 'Hello! Nyx is ready.'
-                }
-              }));
-              log('[DC=>] response.create (greeting)');
+              try {
+                dc.send(JSON.stringify({
+                  type: 'response.create',
+                  response: { instructions: 'Hello! Nyx is ready.' }
+                }));
+                log('[DC=>] response.create (greeting)');
+              } catch (e) {
+                log('[ERR] greeting send failed', e?.message || e);
+              }
             }
 
             // Register Docs tools AFTER instructions are applied
@@ -293,14 +402,9 @@
                       text: (args.text ?? '').toString()
                     };
                   } else {
-                    // Unsupported tool — return an error as a normal response.create (so the assistant will get it)
                     const out = { error: `Unsupported tool: ${name}` };
-                    if (dc && dc.readyState === 'open') {
-                      dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
-                      dc.send(JSON.stringify({ type: 'response.create' }));
-                    } else {
-                      log('[WARN] DC not open; dropping tool output (unsupported):', out);
-                    }
+                    // Return error to assistant as readable instructions (safe, accepted shape)
+                    await sendResponseInstructions(JSON.stringify(out));
                     return;
                   }
 
@@ -314,21 +418,11 @@
                   const text = await r.text();
                   log('[TOOL]', name, r.status, text.slice(0, 400));
 
-                  // Send doc content as a normal response.create.instructions (avoids unknown parameter rejections)
-                  if (dc && dc.readyState === 'open') {
-                    dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text } }));
-                    dc.send(JSON.stringify({ type: 'response.create' }));
-                  } else {
-                    log('[WARN] DC not open; dropping tool output (success).');
-                  }
+                  // Send doc content as normal response.create.instructions (server accepted)
+                  await sendResponseInstructions(text);
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
-                  if (dc && dc.readyState === 'open') {
-                    dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
-                    dc.send(JSON.stringify({ type: 'response.create' }));
-                  } else {
-                    log('[WARN] DC not open; dropping tool output (error):', out);
-                  }
+                  await sendResponseInstructions(JSON.stringify(out));
                 }
               };
 
@@ -345,6 +439,7 @@
                       parameters: {
                         type: 'object',
                         properties: {
+                          docId: { type: 'string', description: 'Optional Google Doc ID (preferred if known)' },
                           docName: { type: 'string', description: 'Document name to read' },
                           folderName: { type: 'string', description: 'Optional parent folder; omit for root' }
                         },
@@ -369,10 +464,13 @@
                 }
               };
 
-              dc.send(JSON.stringify(toolsUpdate));
-              log('[DC=>] tools session.update (Docs) sent');
+              try {
+                dc.send(JSON.stringify(toolsUpdate));
+                log('[DC=>] tools session.update (Docs) sent');
+              } catch (e) {
+                log('[ERR] sending tools session.update', e?.message || e);
+              }
             }
-
             return;
           }
 
@@ -415,13 +513,14 @@
               if (window.toolArgBuf) delete window.toolArgBuf[id];
 
               let args = {};
-              try { args = JSON.parse(argsStr); } catch {}
+              try { args = JSON.parse(argsStr); } catch (e) { args = {}; }
               if (typeof window.handleToolCall === 'function') {
                 window.handleToolCall(name, args, id);
               }
               return;
             }
           }
+
           if (msg.type === 'error') {
             console.error('[Realtime ERROR]', msg.error || msg);
             setStatus('error');
@@ -465,6 +564,11 @@
       pc = null; mic = null; dc = null; audioEl.srcObject = null;
       setSendReady(false);
       setStatus('idle');
+      // clear response state and pending queue when stopping
+      window.__responseActive = false;
+      window.__waitingForResponseId = false;
+      window.__lastResponseCreatedId = null;
+      window.__pendingToolResults = [];
       log('[RT] stopped');
     }
 
