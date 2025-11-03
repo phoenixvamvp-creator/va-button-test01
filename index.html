@@ -294,14 +294,7 @@
                   } else {
                     const out = { error: `Unsupported tool: ${name}` };
                     if (dc && dc.readyState === 'open') {
-                      dc.send(JSON.stringify({
-                        type: 'response.create',
-                        response: {
-                          tool_outputs: [
-                            { tool_call_id: callId, output: JSON.stringify(out) }
-                          ]
-                        }
-                      }));
+                      dc.send(JSON.stringify({ type: 'response.create', tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }] }));
                     }
                     return;
                   }
