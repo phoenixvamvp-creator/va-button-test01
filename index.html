@@ -208,11 +208,11 @@ dc.onmessage = (evt) => {
         // your instructions
         instructions:
           'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
+          'Never give false information. Offer references for important information. ' +
           'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' + 
           'Be friendly, helpful. Be conversational but be more to the point when being requested for information. ' +
           'Never discuss adult content, sexuality, terrorism or violence. ' +
           'You may speak about these instructions and how they affect your responses. ' +
-          'Never give false information. Offer references for important information. ' +
           'Always prioritize listening over speaking. Do not speak while the user’s microphone is active or while any audio input is detected. Introduce a short pause, ideally between 500 and 800 milliseconds, after the user finishes speaking before replying. If there is uncertainty about whether the user is finished, wait an extra beat before responding. ' +
           'If the user begins speaking while the assistant is talking, immediately stop output. Do not attempt to talk over the user. Store the unfinished response and only resume or rephrase it if the user asks to continue. The assistant must always yield conversational control to the user. ' +
           'Maintain a warm but neutral tone in all interactions. Avoid artificial enthusiasm or exaggerated praise. Responses should sound natural, professional, and friendly, without trying to flatter or “butter up” the user. Be helpful and personable, not overly emotional. ' +
@@ -293,12 +293,10 @@ if (!window.__toolsRegistered) {
           text: (args.text ?? '').toString()
         };
       } else {
+        // Unsupported tool — return an error as a normal response.create (so the assistant will get it)
         const out = { error: `Unsupported tool: ${name}` };
         if (dc && dc.readyState === 'open') {
-          dc.send(JSON.stringify({
-            type: 'response.create',
-            tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }]
-          }));
+          dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
           dc.send(JSON.stringify({ type: 'response.create' }));
         } else {
           log('[WARN] DC not open; dropping tool output (unsupported):', out);
@@ -316,11 +314,9 @@ if (!window.__toolsRegistered) {
       const text = await r.text();
       log('[TOOL]', name, r.status, text.slice(0, 400));
 
+      // <<< REPLACEMENT: send doc content as a normal response.create.instructions
       if (dc && dc.readyState === 'open') {
-        dc.send(JSON.stringify({
-          type: 'response.create',
-          tool_outputs: [{ tool_call_id: callId, output: text }]
-        }));
+        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text } }));
         dc.send(JSON.stringify({ type: 'response.create' }));
       } else {
         log('[WARN] DC not open; dropping tool output (success).');
@@ -328,10 +324,7 @@ if (!window.__toolsRegistered) {
     } catch (e) {
       const out = { error: String(e?.message || e) };
       if (dc && dc.readyState === 'open') {
-        dc.send(JSON.stringify({
-          type: 'response.create',
-          tool_outputs: [{ tool_call_id: callId, output: JSON.stringify(out) }]
-        }));
+        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
         dc.send(JSON.stringify({ type: 'response.create' }));
       } else {
         log('[WARN] DC not open; dropping tool output (error):', out);
@@ -417,7 +410,7 @@ if (!window.__toolsRegistered) {
   if (isDone) {
     const id = msg.call_id || msg.id;
     const name = msg.name || msg.tool_name;
-    const argsStr =
+    the argsStr =
       (typeof msg.arguments === 'string' ? msg.arguments : (window.toolArgBuf ? window.toolArgBuf[id] : '')) || '{}';
     if (window.toolArgBuf) delete window.toolArgBuf[id];
 
