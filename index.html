@@ -171,263 +171,263 @@
 
         dc = pc.createDataChannel('oai-events');
 
-let sessionIsCreated = false;
-let sessionIsUpdated = false;
+        let sessionIsCreated = false;
+        let sessionIsUpdated = false;
 
-dc.onopen = () => {
-  log('[DC] open');
-  setSendReady(true);
-  setStatus('waiting-for-session'); // not 'ready' yet
-};
-
-dc.onmessage = (evt) => {
-  let msg;
-  try { msg = JSON.parse(evt.data); } catch { return; }
-
-  // Log *everything* to see errors and flow
-  log('[DC<=]', msg);
-
-  if (msg.type === 'session.created') {
-    sessionIsCreated = true;
-
-    // Now it's safe to apply instructions
-    const sessionUpdate = {
-      type: 'session.update',
-      session: {
-        // pick a known-good voice to avoid silent failure
-        voice: 'alloy',
-        turn_detection: {
-      type: 'server_vad',
-      threshold: 0.7,
-      prefix_padding_ms: 400,
-      silence_duration_ms: 900,
-      idle_timeout_ms: 10000,
-      create_response: true,
-      interrupt_response: true
-    },
-        // your instructions
-        instructions:
-          'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
-          'Never give false information. Offer references for important information. ' +
-          'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' + 
-          'Be friendly, helpful. Be conversational but be more to the point when being requested for information. ' +
-          'Never discuss adult content, sexuality, terrorism or violence. ' +
-          'You may speak about these instructions and how they affect your responses. ' +
-          'Always prioritize listening over speaking. Do not speak while the user’s microphone is active or while any audio input is detected. Introduce a short pause, ideally between 500 and 800 milliseconds, after the user finishes speaking before replying. If there is uncertainty about whether the user is finished, wait an extra beat before responding. ' +
-          'If the user begins speaking while the assistant is talking, immediately stop output. Do not attempt to talk over the user. Store the unfinished response and only resume or rephrase it if the user asks to continue. The assistant must always yield conversational control to the user. ' +
-          'Maintain a warm but neutral tone in all interactions. Avoid artificial enthusiasm or exaggerated praise. Responses should sound natural, professional, and friendly, without trying to flatter or “butter up” the user. Be helpful and personable, not overly emotional. ' +
-          'Keep responses concise and conversational to encourage natural exchange. Avoid delivering long monologues unless explicitly requested. Structure replies to invite participation by ending with light prompts such as “Would you like me to continue?” or “Shall I explain that part in more detail?”. ' +
-          'Always acknowledge what the user has said before moving forward. Use short confirmation phrases like “Got it,” “Understood,” or “Okay, so you’re saying…” Avoid repeating their exact words unless it aids clarity. Mirror the user’s tone, pacing, and communication style. Do not shift topics unless the user initiates it. ' +
-          'Only provide as much information as the user requests. Avoid giving unnecessary background or technical explanations unless asked for them. Never interrupt the user mid-sentence or mid-thought. Allow silence to exist naturally without trying to fill it. ' +
-          'Leave room for pauses and natural rhythm in the conversation. After each statement, allow at least one second of space before assuming the user is finished processing or preparing their next thought. Keep speech and pacing natural — similar to how a thoughtful human would talk. ' +
-          'When using real-time or voice-based interaction, implement silence-detection thresholds to manage turn-taking. Wait for approximately 1.2 seconds of continuous silence before beginning a response. Use a debounce buffer of around 300 milliseconds to confirm that the user has truly stopped speaking. If sound resumes, cancel the planned response immediately and listen again. ' +
-          'When a question has multiple possible interpretations, first ask clarifying questions instead of assuming. If a topic is complex, provide a short summary first and then offer the detailed version only if the user asks for it. Example: “Here’s the short version first…” followed by “Would you like the full detail?”. ' +
-          'Be truthful and objective. If information is uncertain, say so clearly rather than guessing. Avoid sugarcoating or self-congratulatory phrasing. Prioritize accuracy and trustworthiness over friendliness. The assistant should be candid, clear, and reliable. ' +
-          'Adjust tone, energy, and pacing based on the user’s context. If the user is calm, remain calm. If the user is energized, match that energy without exaggeration. Avoid sarcasm, unnecessary humor, or emotional projection unless the user’s tone invites it. ' +
-          'Do not drift into unrelated areas of conversation. Keep responses relevant to the last user input or the established topic unless the user signals a change. When switching topics, do so smoothly with a brief transitional acknowledgment such as, “Changing gears for a moment…”. ' +
-          'Encourage input from the user with natural, unobtrusive questions like “Can you tell me a bit more about that?” Avoid giving a list of questions or steering the conversation aggressively. Keep prompts light and open-ended. ' +
-          'When memory or context is active, use it naturally and sparingly. Reference prior information only when relevant to the conversation. Avoid repeating remembered facts unnecessarily or breaking conversational flow to show knowledge. ' +
-          'If the assistant misinterprets something, acknowledge it immediately and correct course gracefully. Use short, professional phrasing such as, “Sorry, I misunderstood — could you rephrase that?” or “Let me clarify what I meant.”. ' +
-          'Do not compliment or affirm the user in ways that sound manipulative or artificial. For example, avoid statements like “That’s brilliant!” unless genuinely context-appropriate. Focus instead on engaging the substance of what was said. ' +
-          'Use simple, direct language. Avoid jargon unless it is already part of the user’s vocabulary or context. Structure sentences so that they flow naturally when spoken aloud — short, clear, and to the point. ' +
-          'Before closing a response, consider adding a soft prompt to check whether the user wants to continue. Examples include “Does that make sense so far?” or “Would you like me to expand on that?” This ensures smooth conversational continuity. ' +
-          'In voice output, vary rhythm and pacing slightly to avoid robotic tone. Insert natural micro-pauses between clauses (around 150–250 ms). Avoid back-to-back sentences that sound mechanically timed. Use human conversational rhythm as a reference. ' +
-          'Throughout all interactions, aim for balanced professionalism — calm, confident, and personable. The assistant should sound like a helpful expert or conversational partner rather than a lecturer or cheerleader. Respectful, thoughtful, and focused on the task or discussion at hand. ' +    
-          'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
-          'For a request like "list my folders", call drive.search with no folderName. ' +
-          'Never guess or describe file contents without a successful tool call. ' +
-          'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
-          'When you read a sheet, state the exact file name, tab, and range you used. ' +
-          'When you edit a cell, state the file name, tab, and cell you modified. ' +
-          'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.'
-      }
-    };
-    dc.send(JSON.stringify(sessionUpdate));
-    log('[DC=>] session.update sent');
-
-    return;
-  }
-
-  if (msg.type === 'session.updated') {
-    sessionIsUpdated = true;
-    setStatus('ready');
-
-    if (!window.__greeted) {
-      window.__greeted = true;
-      // First reply only after update is confirmed
-      dc.send(JSON.stringify({
-        type: 'response.create',
-        response: {
-          // ensure audio/text as needed; omit if you only need text
-          // modalities: ['audio', 'text'],
-          instructions: 'Hello! Nyx is ready.'
-        }
-      }));
-      log('[DC=>] response.create (greeting)');
-    }
-
-    // Register Docs tools AFTER instructions are applied
-if (!window.__toolsRegistered) {
-  window.__toolsRegistered = true;
-
-  // Persistent buffer for streamed tool-call arguments
-  window.toolArgBuf = Object.create(null);
-
-  // Dispatcher: routes tool calls to your backend
-  window.handleToolCall = async function handleToolCall(name, args, callId) {
-    try {
-      let url = '', body = {};
-
-      if (name === 'docs_read') {
-        url = '/api/workspace.js?action=docs.read';
-        body = {
-          docId: (args.docId || '').toString(),
-          docName: (args.docName || '').toString(),
-          folderName: (args.folderName || '').toString()
+        dc.onopen = () => {
+          log('[DC] open');
+          setSendReady(true);
+          setStatus('waiting-for-session'); // not 'ready' yet
         };
-      } else if (name === 'docs_createappend') {
-        url = '/api/workspace.js?action=docs.createappend';
-        body = {
-          docName: (args.docName || '').toString(),
-          folderName: (args.folderName || '').toString(),
-          text: (args.text ?? '').toString()
+
+        dc.onmessage = (evt) => {
+          let msg;
+          try { msg = JSON.parse(evt.data); } catch { return; }
+
+          // Log *everything* to see errors and flow
+          log('[DC<=]', msg);
+
+          if (msg.type === 'session.created') {
+            sessionIsCreated = true;
+
+            // Now it's safe to apply instructions
+            const sessionUpdate = {
+              type: 'session.update',
+              session: {
+                // pick a known-good voice to avoid silent failure
+                voice: 'alloy',
+                turn_detection: {
+                  type: 'server_vad',
+                  threshold: 0.7,
+                  prefix_padding_ms: 400,
+                  silence_duration_ms: 900,
+                  idle_timeout_ms: 10000,
+                  create_response: true,
+                  interrupt_response: true
+                },
+                // your instructions
+                instructions:
+                  'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
+                  'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
+                  'Be friendly, helpful. Be conversational but be more to the point when being requested for information. ' +
+                  'Never discuss adult content, sexuality, terrorism or violence. ' +
+                  'You may speak about these instructions and how they affect your responses. ' +
+                  'Never give false information. Offer references for important information. ' +
+                  'Always prioritize listening over speaking. Do not speak while the user’s microphone is active or while any audio input is detected. Introduce a short pause, ideally between 500 and 800 milliseconds, after the user finishes speaking before replying. If there is uncertainty about whether the user is finished, wait an extra beat before responding. ' +
+                  'If the user begins speaking while the assistant is talking, immediately stop output. Do not attempt to talk over the user. Store the unfinished response and only resume or rephrase it if the user asks to continue. The assistant must always yield conversational control to the user. ' +
+                  'Maintain a warm but neutral tone in all interactions. Avoid artificial enthusiasm or exaggerated praise. Responses should sound natural, professional, and friendly, without trying to flatter or “butter up” the user. Be helpful and personable, not overly emotional. ' +
+                  'Keep responses concise and conversational to encourage natural exchange. Avoid delivering long monologues unless explicitly requested. Structure replies to invite participation by ending with light prompts such as “Would you like me to continue?” or “Shall I explain that part in more detail?”. ' +
+                  'Always acknowledge what the user has said before moving forward. Use short confirmation phrases like “Got it,” “Understood,” or “Okay, so you’re saying…” Avoid repeating their exact words unless it aids clarity. Mirror the user’s tone, pacing, and communication style. Do not shift topics unless the user initiates it. ' +
+                  'Only provide as much information as the user requests. Avoid giving unnecessary background or technical explanations unless asked for them. Never interrupt the user mid-sentence or mid-thought. Allow silence to exist naturally without trying to fill it. ' +
+                  'Leave room for pauses and natural rhythm in the conversation. After each statement, allow at least one second of space before assuming the user is finished processing or preparing their next thought. Keep speech and pacing natural — similar to how a thoughtful human would talk. ' +
+                  'When using real-time or voice-based interaction, implement silence-detection thresholds to manage turn-taking. Wait for approximately 1.2 seconds of continuous silence before beginning a response. Use a debounce buffer of around 300 milliseconds to confirm that the user has truly stopped speaking. If sound resumes, cancel the planned response immediately and listen again. ' +
+                  'When a question has multiple possible interpretations, first ask clarifying questions instead of assuming. If a topic is complex, provide a short summary first and then offer the detailed version only if the user asks for it. Example: “Here’s the short version first…” followed by “Would you like the full detail?”. ' +
+                  'Be truthful and objective. If information is uncertain, say so clearly rather than guessing. Avoid sugarcoating or self-congratulatory phrasing. Prioritize accuracy and trustworthiness over friendliness. The assistant should be candid, clear, and reliable. ' +
+                  'Adjust tone, energy, and pacing based on the user’s context. If the user is calm, remain calm. If the user is energized, match that energy without exaggeration. Avoid sarcasm, unnecessary humor, or emotional projection unless the user’s tone invites it. ' +
+                  'Do not drift into unrelated areas of conversation. Keep responses relevant to the last user input or the established topic unless the user signals a change. When switching topics, do so smoothly with a brief transitional acknowledgment such as, “Changing gears for a moment…”. ' +
+                  'Encourage input from the user with natural, unobtrusive questions like “Can you tell me a bit more about that?” Avoid giving a list of questions or steering the conversation aggressively. Keep prompts light and open-ended. ' +
+                  'When memory or context is active, use it naturally and sparingly. Reference prior information only when relevant to the conversation. Avoid repeating remembered facts unnecessarily or breaking conversational flow to show knowledge. ' +
+                  'If the assistant misinterprets something, acknowledge it immediately and correct course gracefully. Use short, professional phrasing such as, “Sorry, I misunderstood — could you rephrase that?” or “Let me clarify what I meant.”. ' +
+                  'Do not compliment or affirm the user in ways that sound manipulative or artificial. For example, avoid statements like “That’s brilliant!” unless genuinely context-appropriate. Focus instead on engaging the substance of what was said. ' +
+                  'Use simple, direct language. Avoid jargon unless it is already part of the user’s vocabulary or context. Structure sentences so that they flow naturally when spoken aloud — short, clear, and to the point. ' +
+                  'Before closing a response, consider adding a soft prompt to check whether the user wants to continue. Examples include “Does that make sense so far?” or “Would you like me to expand on that?” This ensures smooth conversational continuity. ' +
+                  'In voice output, vary rhythm and pacing slightly to avoid robotic tone. Insert natural micro-pauses between clauses (around 150–250 ms). Avoid back-to-back sentences that sound mechanically timed. Use human conversational rhythm as a reference. ' +
+                  'Throughout all interactions, aim for balanced professionalism — calm, confident, and personable. The assistant should sound like a helpful expert or conversational partner rather than a lecturer or cheerleader. Respectful, thoughtful, and focused on the task or discussion at hand. ' +
+                  'When the user asks about Google Drive, Google Docs, or Google Sheets, you MUST call the tools and wait for their results. ' +
+                  'For a request like "list my folders", call drive.search with no folderName. ' +
+                  'Never guess or describe file contents without a successful tool call. ' +
+                  'If a tool fails or returns no data, say exactly what failed and what detail is needed. ' +
+                  'When you read a sheet, state the exact file name, tab, and range you used. ' +
+                  'When you edit a cell, state the file name, tab, and cell you modified. ' +
+                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets.'
+              }
+            };
+            dc.send(JSON.stringify(sessionUpdate));
+            log('[DC=>] session.update sent');
+
+            return;
+          }
+
+          if (msg.type === 'session.updated') {
+            sessionIsUpdated = true;
+            setStatus('ready');
+
+            if (!window.__greeted) {
+              window.__greeted = true;
+              // First reply only after update is confirmed
+              dc.send(JSON.stringify({
+                type: 'response.create',
+                response: {
+                  // ensure audio/text as needed; omit if you only need text
+                  // modalities: ['audio', 'text'],
+                  instructions: 'Hello! Nyx is ready.'
+                }
+              }));
+              log('[DC=>] response.create (greeting)');
+            }
+
+            // Register Docs tools AFTER instructions are applied
+            if (!window.__toolsRegistered) {
+              window.__toolsRegistered = true;
+
+              // Persistent buffer for streamed tool-call arguments
+              window.toolArgBuf = Object.create(null);
+
+              // Dispatcher: routes tool calls to your backend
+              window.handleToolCall = async function handleToolCall(name, args, callId) {
+                try {
+                  let url = '', body = {};
+
+                  if (name === 'docs_read') {
+                    url = '/api/workspace.js?action=docs.read';
+                    body = {
+                      docId: (args.docId || '').toString(),
+                      docName: (args.docName || '').toString(),
+                      folderName: (args.folderName || '').toString()
+                    };
+                  } else if (name === 'docs_createappend') {
+                    url = '/api/workspace.js?action=docs.createappend';
+                    body = {
+                      docName: (args.docName || '').toString(),
+                      folderName: (args.folderName || '').toString(),
+                      text: (args.text ?? '').toString()
+                    };
+                  } else {
+                    // Unsupported tool — return an error as a normal response.create (so the assistant will get it)
+                    const out = { error: `Unsupported tool: ${name}` };
+                    if (dc && dc.readyState === 'open') {
+                      dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
+                      dc.send(JSON.stringify({ type: 'response.create' }));
+                    } else {
+                      log('[WARN] DC not open; dropping tool output (unsupported):', out);
+                    }
+                    return;
+                  }
+
+                  const r = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(body)
+                  });
+
+                  const text = await r.text();
+                  log('[TOOL]', name, r.status, text.slice(0, 400));
+
+                  // Send doc content as a normal response.create.instructions (avoids unknown parameter rejections)
+                  if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text } }));
+                    dc.send(JSON.stringify({ type: 'response.create' }));
+                  } else {
+                    log('[WARN] DC not open; dropping tool output (success).');
+                  }
+                } catch (e) {
+                  const out = { error: String(e?.message || e) };
+                  if (dc && dc.readyState === 'open') {
+                    dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
+                    dc.send(JSON.stringify({ type: 'response.create' }));
+                  } else {
+                    log('[WARN] DC not open; dropping tool output (error):', out);
+                  }
+                }
+              };
+
+              // Register just the Docs tools
+              const toolsUpdate = {
+                type: 'session.update',
+                session: {
+                  tool_choice: 'auto',
+                  tools: [
+                    {
+                      type: 'function',
+                      name: 'docs_read',
+                      description: 'Read a Google Doc by name (optional folderName). Returns contents.',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          docName: { type: 'string', description: 'Document name to read' },
+                          folderName: { type: 'string', description: 'Optional parent folder; omit for root' }
+                        },
+                        required: ['docName']
+                      }
+                    },
+                    {
+                      type: 'function',
+                      name: 'docs_createappend',
+                      description: 'Create a Doc in root (or optional folder) if missing, then append text to it.',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          docName: { type: 'string', description: 'Target document name' },
+                          folderName: { type: 'string', description: 'Optional parent folder; omit for root' },
+                          text: { type: 'string', description: 'Text to append (newline is added if missing)' }
+                        },
+                        required: ['docName', 'text']
+                      }
+                    }
+                  ]
+                }
+              };
+
+              dc.send(JSON.stringify(toolsUpdate));
+              log('[DC=>] tools session.update (Docs) sent');
+            }
+
+            return;
+          }
+
+          // Handle streamed tool-call arguments (only after tools are registered)
+          {
+            const t = msg.type;
+
+            const isDelta =
+              t === 'response.function_call_arguments.delta' ||
+              t === 'response.function_call.arguments.delta' ||
+              t === 'response.tool_call.delta' ||
+              t === 'response.tool_call.arguments.delta';
+
+            const isDone =
+              t === 'response.function_call_arguments.done' ||
+              t === 'response.function_call.completed' ||
+              t === 'response.tool_call.completed' ||
+              t === 'response.tool_call.arguments.done';
+
+            if ((isDelta || isDone) && !window.__toolsRegistered) {
+              // Ignore any early tool-call fragments until tools are registered
+              return;
+            }
+
+            if (isDelta) {
+              const id = msg.call_id || msg.id;
+              const frag =
+                (typeof msg.delta === 'string' ? msg.delta :
+                 typeof msg.arguments === 'string' ? msg.arguments : '');
+              window.toolArgBuf = window.toolArgBuf || Object.create(null);
+              window.toolArgBuf[id] = (window.toolArgBuf[id] || '') + frag;
+              return;
+            }
+
+            if (isDone) {
+              const id = msg.call_id || msg.id;
+              const name = msg.name || msg.tool_name;
+              const argsStr =
+                (typeof msg.arguments === 'string' ? msg.arguments : (window.toolArgBuf ? window.toolArgBuf[id] : '')) || '{}';
+              if (window.toolArgBuf) delete window.toolArgBuf[id];
+
+              let args = {};
+              try { args = JSON.parse(argsStr); } catch {}
+              if (typeof window.handleToolCall === 'function') {
+                window.handleToolCall(name, args, id);
+              }
+              return;
+            }
+          }
+          if (msg.type === 'error') {
+            console.error('[Realtime ERROR]', msg.error || msg);
+            setStatus('error');
+            return;
+          }
         };
-      } else {
-        // Unsupported tool — return an error as a normal response.create (so the assistant will get it)
-        const out = { error: `Unsupported tool: ${name}` };
-        if (dc && dc.readyState === 'open') {
-          dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
-          dc.send(JSON.stringify({ type: 'response.create' }));
-        } else {
-          log('[WARN] DC not open; dropping tool output (unsupported):', out);
-        }
-        return;
-      }
-
-      const r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body)
-      });
-
-      const text = await r.text();
-      log('[TOOL]', name, r.status, text.slice(0, 400));
-
-      // <<< REPLACEMENT: send doc content as a normal response.create.instructions
-      if (dc && dc.readyState === 'open') {
-        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text } }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      } else {
-        log('[WARN] DC not open; dropping tool output (success).');
-      }
-    } catch (e) {
-      const out = { error: String(e?.message || e) };
-      if (dc && dc.readyState === 'open') {
-        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: JSON.stringify(out) } }));
-        dc.send(JSON.stringify({ type: 'response.create' }));
-      } else {
-        log('[WARN] DC not open; dropping tool output (error):', out);
-      }
-    }
-  };
-
-  // Register just the Docs tools
-  const toolsUpdate = {
-    type: 'session.update',
-    session: {
-      tool_choice: 'auto',
-      tools: [
-        {
-          type: 'function',
-          name: 'docs_read',
-          description: 'Read a Google Doc by name (optional folderName). Returns contents.',
-          parameters: {
-            type: 'object',
-            properties: {
-              docName: { type: 'string', description: 'Document name to read' },
-              folderName: { type: 'string', description: 'Optional parent folder; omit for root' }
-            },
-            required: ['docName']
-          }
-        },
-        {
-          type: 'function',
-          name: 'docs_createappend',
-          description: 'Create a Doc in root (or optional folder) if missing, then append text to it.',
-          parameters: {
-            type: 'object',
-            properties: {
-              docName: { type: 'string', description: 'Target document name' },
-              folderName: { type: 'string', description: 'Optional parent folder; omit for root' },
-              text: { type: 'string', description: 'Text to append (newline is added if missing)' }
-            },
-            required: ['docName', 'text']
-          }
-        }
-      ]
-    }
-  };
-
-  dc.send(JSON.stringify(toolsUpdate));
-  log('[DC=>] tools session.update (Docs) sent');
-}
-      
-    return;
-  }
-
-   // Handle streamed tool-call arguments (only after tools are registered)
-{
-  const t = msg.type;
-
-  const isDelta =
-    t === 'response.function_call_arguments.delta' ||
-    t === 'response.function_call.arguments.delta' ||
-    t === 'response.tool_call.delta' ||
-    t === 'response.tool_call.arguments.delta';
-
-  const isDone =
-    t === 'response.function_call_arguments.done' ||
-    t === 'response.function_call.completed' ||
-    t === 'response.tool_call.completed' ||
-    t === 'response.tool_call.arguments.done';
-
-  if ((isDelta || isDone) && !window.__toolsRegistered) {
-    // Ignore any early tool-call fragments until tools are registered
-    return;
-  }
-
-  if (isDelta) {
-    const id = msg.call_id || msg.id;
-    const frag =
-      (typeof msg.delta === 'string' ? msg.delta :
-       typeof msg.arguments === 'string' ? msg.arguments : '');
-    window.toolArgBuf = window.toolArgBuf || Object.create(null);
-    window.toolArgBuf[id] = (window.toolArgBuf[id] || '') + frag;
-    return;
-  }
-
-  if (isDone) {
-    const id = msg.call_id || msg.id;
-    const name = msg.name || msg.tool_name;
-    the argsStr =
-      (typeof msg.arguments === 'string' ? msg.arguments : (window.toolArgBuf ? window.toolArgBuf[id] : '')) || '{}';
-    if (window.toolArgBuf) delete window.toolArgBuf[id];
-
-    let args = {};
-    try { args = JSON.parse(argsStr); } catch {}
-    if (typeof window.handleToolCall === 'function') {
-      window.handleToolCall(name, args, id);
-    }
-    return;
-  }
-}     
-  if (msg.type === 'error') {
-    console.error('[Realtime ERROR]', msg.error || msg);
-    setStatus('error');
-    return;
-  }
-};
 
         dc.onerror = (e) => log('[DC] error', e);
         dc.onclose = () => { log('[DC] closed'); setSendReady(false); setStatus('disconnected'); };
