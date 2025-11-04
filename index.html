@@ -123,17 +123,23 @@
 
     let pc = null, mic = null, dc = null, live = false;
 
-    // Response state management (prevent concurrent response.create)
+    // Response state management
+    // __responseActive: whether we have created a response that is currently active
+    // __waitingForResponseId: we created a response and are waiting for server to send response.created to capture id
+    // __lastResponseCreatedId: the server-assigned response id (used to match done events)
+    // __pendingToolResults: queue of tool results that arrived while a response was active
     window.__responseActive = false;
     window.__waitingForResponseId = false;
     window.__lastResponseCreatedId = null;
     window.__pendingToolResults = [];
 
+    // Safety fallback: clear responseActive after this timeout (ms) if not cleared by server events
     const RESPONSE_ACTIVE_FALLBACK_MS = 12000;
     let __responseActiveFallbackTimer = null;
     function setResponseActive(active) {
       window.__responseActive = !!active;
       if (active) {
+        // start fallback timer to avoid permanent lock
         clearTimeout(__responseActiveFallbackTimer);
         __responseActiveFallbackTimer = setTimeout(() => {
           if (window.__responseActive) {
@@ -156,6 +162,7 @@
         return;
       }
       if (window.__responseActive) {
+        // Queue the result to send once current response completes
         window.__pendingToolResults.push({ text });
         log('[INFO] response active — queued tool result');
         return;
@@ -163,6 +170,7 @@
       try {
         window.__waitingForResponseId = true;
         setResponseActive(true);
+        // send single response.create with instructions; do NOT send a second empty create
         dc.send(JSON.stringify({
           type: 'response.create',
           response: { instructions: text }
@@ -170,6 +178,7 @@
         log('[DC=>] response.create (tool output sent)');
       } catch (e) {
         log('[ERR] sendResponseInstructions send failed:', e?.message || e);
+        // if send fails, clear active to avoid lock
         setResponseActive(false);
         window.__waitingForResponseId = false;
       }
@@ -254,7 +263,7 @@
 
           log('[DC<=]', msg);
 
-          // Capture response id when server sends response.created
+          // If the server reports a response created, capture id for matching done events
           if (msg.type === 'response.created' && msg.response && msg.response.id) {
             if (window.__waitingForResponseId) {
               window.__lastResponseCreatedId = msg.response.id;
@@ -263,13 +272,15 @@
             }
           }
 
-          // Clear flags when response finishes (match by response id when available)
+          // Clear __responseActive when the response finishes (match by response id when available)
+          // Accept a few possible done/completed event names
           if (msg.type === 'response.done' && msg.response_id) {
             if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
               log('[INFO] response.done -> cleared __responseActive');
+              // flush any queued tool results
               flushPendingToolResults();
             }
           }
@@ -290,6 +301,13 @@
               log('[INFO] response.output_item.completed -> cleared __responseActive');
               flushPendingToolResults();
             }
+          }
+
+          // Some servers emit output_item.added then later output_item.completed.
+          // If we see an output_item.added that clearly indicates final text/audio, we can optimistically clear.
+          if (msg.type === 'response.output_item.added' && msg.item && msg.item.type) {
+            // If item is an audio buffer stopped or final text piece, treat as progress; don't clear here unless status indicates completion
+            // We'll rely on the explicit completed/done events above.
           }
 
           // Session lifecycle
@@ -345,6 +363,7 @@
 
             if (!window.__greeted) {
               window.__greeted = true;
+              // First reply only after update is confirmed
               try {
                 dc.send(JSON.stringify({
                   type: 'response.create',
@@ -356,7 +375,7 @@
               }
             }
 
-            // Register Docs & Sheets tools AFTER instructions are applied
+            // Register Docs tools AFTER instructions are applied
             if (!window.__toolsRegistered) {
               window.__toolsRegistered = true;
 
@@ -368,7 +387,6 @@
                 try {
                   let url = '', body = {};
 
-                  // DOCS: read / createappend / write / replace
                   if (name === 'docs_read') {
                     url = '/api/workspace.js?action=docs.read';
                     body = {
@@ -376,16 +394,6 @@
                       docName: (args.docName || '').toString(),
                       folderName: (args.folderName || '').toString()
                     };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] docs_read', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(text);
-                    return;
                   } else if (name === 'docs_createappend') {
                     url = '/api/workspace.js?action=docs.createappend';
                     body = {
@@ -393,166 +401,32 @@
                       folderName: (args.folderName || '').toString(),
                       text: (args.text ?? '').toString()
                     };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] docs_createappend', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — appended to ${body.docName || '(unnamed)'} (status ${r.status}).`);
-                    return;
-                  } else if (name === 'docs_write') {
-                    url = '/api/workspace.js?action=docs.createappend';
-                    body = {
-                      docName: (args.docName || '').toString(),
-                      folderName: (args.folderName || '').toString(),
-                      text: (args.text ?? '').toString(),
-                      overwrite: true
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] docs_write', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — wrote to ${body.docName || '(unnamed)'} (status ${r.status}).`);
-                    return;
-                  } else if (name === 'docs_replace') {
-                    // Read current content, modify client-side, then push overwrite
-                    const docName = (args.docName || '').toString();
-                    const folderName = (args.folderName || '').toString();
-                    if (!docName) {
-                      await sendResponseInstructions(JSON.stringify({ error: 'docs_replace requires docName' }));
-                      return;
-                    }
-                    const rr = await fetch('/api/workspace.js?action=docs.read', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ docName, folderName })
-                    });
-                    const rrText = await rr.text();
-                    let curText = '';
-                    try {
-                      const parsed = JSON.parse(rrText);
-                      curText = parsed?.text ?? rrText;
-                    } catch {
-                      curText = rrText;
-                    }
-                    let newText = curText ?? '';
-                    if (typeof args.lineNumber === 'number') {
-                      const lines = newText.split(/\r?\n/);
-                      const idx = Math.max(0, Math.min(lines.length - 1, args.lineNumber - 1));
-                      lines[idx] = (args.text ?? '').toString();
-                      newText = lines.join('\n');
-                    } else if (typeof args.find === 'string') {
-                      const find = args.find;
-                      const replace = (args.replace ?? '').toString();
-                      newText = newText.split(find).join(replace);
-                    } else if (typeof args.text === 'string' && args.mode === 'replace_all') {
-                      newText = args.text;
-                    } else {
-                      newText = newText + '\n' + (args.text ?? '');
-                    }
-                    const wr = await fetch('/api/workspace.js?action=docs.createappend', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ docName, folderName, text: newText, overwrite: true })
-                    });
-                    const wrText = await wr.text();
-                    log('[TOOL] docs_replace -> createappend', wr.status, wrText.slice(0, 400));
-                    await sendResponseInstructions(`OK — updated ${docName} (status ${wr.status}).`);
+                  } else {
+                    const out = { error: `Unsupported tool: ${name}` };
+                    // Return error to assistant as readable instructions (safe, accepted shape)
+                    await sendResponseInstructions(JSON.stringify(out));
                     return;
                   }
 
-                  // SHEETS: read / append / update / create
-                  if (name === 'sheets_read') {
-                    url = '/api/workspace.js?action=sheets.read';
-                    body = {
-                      spreadsheetId: (args.spreadsheetId || '').toString(),
-                      sheetName: (args.sheetName || '').toString(),
-                      range: (args.range || '').toString()
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_read', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(text);
-                    return;
-                  } else if (name === 'sheets_append') {
-                    url = '/api/workspace.js?action=sheets.append';
-                    body = {
-                      spreadsheetId: (args.spreadsheetId || '').toString(),
-                      sheetName: (args.sheetName || '').toString(),
-                      range: (args.range || '').toString(),
-                      values: args.values || []
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_append', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — appended rows (status ${r.status}).`);
-                    return;
-                  } else if (name === 'sheets_update_range') {
-                    url = '/api/workspace.js?action=sheets.update';
-                    body = {
-                      spreadsheetId: (args.spreadsheetId || '').toString(),
-                      sheetName: (args.sheetName || '').toString(),
-                      range: (args.range || '').toString(),
-                      values: args.values || []
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_update_range', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — updated range ${body.range || '(unspecified)'} (status ${r.status}).`);
-                    return;
-                  } else if (name === 'sheets_create') {
-                    url = '/api/workspace.js?action=sheets.create';
-                    body = {
-                      spreadsheetName: (args.spreadsheetName || '').toString(),
-                      folderName: (args.folderName || '').toString(),
-                      values: args.values || []
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_create', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — created spreadsheet ${body.spreadsheetName || '(unnamed)'} (status ${r.status}).`);
-                    return;
-                  }
+                  const r = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(body)
+                  });
 
-                  // Unsupported tool
-                  const out = { error: `Unsupported tool: ${name}` };
-                  await sendResponseInstructions(JSON.stringify(out));
+                  const text = await r.text();
+                  log('[TOOL]', name, r.status, text.slice(0, 400));
+
+                  // Send doc content as normal response.create.instructions (server accepted)
+                  await sendResponseInstructions(text);
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
                   await sendResponseInstructions(JSON.stringify(out));
                 }
               };
 
-              // Register tools (Docs + Sheets + write/replace)
+              // Register just the Docs tools
               const toolsUpdate = {
                 type: 'session.update',
                 session: {
@@ -579,101 +453,11 @@
                       parameters: {
                         type: 'object',
                         properties: {
-                          docName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          text: { type: 'string' }
+                          docName: { type: 'string', description: 'Target document name' },
+                          folderName: { type: 'string', description: 'Optional parent folder; omit for root' },
+                          text: { type: 'string', description: 'Text to append (newline is added if missing)' }
                         },
                         required: ['docName', 'text']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'docs_write',
-                      description: 'Write (overwrite) the entire document with the provided text.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          docName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          text: { type: 'string' }
-                        },
-                        required: ['docName', 'text']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'docs_replace',
-                      description: 'Read a document and replace/modify content. Supports replacing by lineNumber or find/replace.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          docName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          lineNumber: { type: 'number' },
-                          find: { type: 'string' },
-                          replace: { type: 'string' },
-                          text: { type: 'string' },
-                          mode: { type: 'string' }
-                        },
-                        required: ['docName']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_read',
-                      description: 'Read a Google Sheet by name (sheetName) and range (A1 notation). If range is omitted, returns the first sheet values.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          spreadsheetId: { type: 'string' },
-                          sheetName: { type: 'string' },
-                          range: { type: 'string' }
-                        },
-                        required: []
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_append',
-                      description: 'Append rows to a sheet. Provide spreadsheetId or sheetName and values as array-of-arrays.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          spreadsheetId: { type: 'string' },
-                          sheetName: { type: 'string' },
-                          range: { type: 'string' },
-                          values: { type: 'array' }
-                        },
-                        required: ['values']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_update_range',
-                      description: 'Update a specific range in a sheet (overwrite existing cells). Provide range and values.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          spreadsheetId: { type: 'string' },
-                          sheetName: { type: 'string' },
-                          range: { type: 'string' },
-                          values: { type: 'array' }
-                        },
-                        required: ['range', 'values']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_create',
-                      description: 'Create a new Google Sheet document with optional initial content.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          spreadsheetName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          values: { type: 'array' }
-                        },
-                        required: ['spreadsheetName']
                       }
                     }
                   ]
@@ -682,7 +466,7 @@
 
               try {
                 dc.send(JSON.stringify(toolsUpdate));
-                log('[DC=>] tools session.update (Docs + Sheets) sent');
+                log('[DC=>] tools session.update (Docs) sent');
               } catch (e) {
                 log('[ERR] sending tools session.update', e?.message || e);
               }
