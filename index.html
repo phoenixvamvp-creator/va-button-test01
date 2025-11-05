@@ -290,7 +290,10 @@
         try { await tx.sender.replaceTrack(micTrack); } catch {}
         if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
 
-        dc = pc.createDatachannel || pc.createDataChannel('oai-events');
+        // Create the data channel and expose it globally for tool blocks
+          dc = pc.createDataChannel('oai-events');
+          window.dc = dc;
+
         if (!dc) {
           // fallback in case of a small environment difference
           try { dc = pc.createDataChannel('oai-events'); } catch (e) { log('[ERR] create datachannel', e); }
