@@ -124,22 +124,16 @@
     let pc = null, mic = null, dc = null, live = false;
 
     // Response state management
-    // __responseActive: whether we have created a response that is currently active
-    // __waitingForResponseId: we created a response and are waiting for server to send response.created to capture id
-    // __lastResponseCreatedId: the server-assigned response id (used to match done events)
-    // __pendingToolResults: queue of tool results that arrived while a response was active
     window.__responseActive = false;
     window.__waitingForResponseId = false;
     window.__lastResponseCreatedId = null;
     window.__pendingToolResults = [];
 
-    // Safety fallback: clear responseActive after this timeout (ms) if not cleared by server events
     const RESPONSE_ACTIVE_FALLBACK_MS = 12000;
     let __responseActiveFallbackTimer = null;
     function setResponseActive(active) {
       window.__responseActive = !!active;
       if (active) {
-        // start fallback timer to avoid permanent lock
         clearTimeout(__responseActiveFallbackTimer);
         __responseActiveFallbackTimer = setTimeout(() => {
           if (window.__responseActive) {
@@ -162,7 +156,6 @@
         return;
       }
       if (window.__responseActive) {
-        // Queue the result to send once current response completes
         window.__pendingToolResults.push({ text });
         log('[INFO] response active — queued tool result');
         return;
@@ -170,7 +163,6 @@
       try {
         window.__waitingForResponseId = true;
         setResponseActive(true);
-        // send single response.create with instructions; do NOT send a second empty create
         dc.send(JSON.stringify({
           type: 'response.create',
           response: { instructions: text }
@@ -178,7 +170,6 @@
         log('[DC=>] response.create (tool output sent)');
       } catch (e) {
         log('[ERR] sendResponseInstructions send failed:', e?.message || e);
-        // if send fails, clear active to avoid lock
         setResponseActive(false);
         window.__waitingForResponseId = false;
       }
@@ -219,6 +210,39 @@
       }
     });
 
+    // Optional helper (unused by Drive add-on, but handy if you want to speak lists of urgent items from Sheets)
+    function buildUrgentTextFromValues(values) {
+      if (!Array.isArray(values) || !values.length) return 'No data returned from sheet.';
+      const header = values[0].map(h => (h||'').toString().trim().toLowerCase());
+      const hasHeader = header.some(h => h.includes('task') || h.includes('urgency') || h.includes('status') || h.includes('task/job'));
+      let taskIdx = 0, descIdx = 1, urgencyIdx = 2, statusIdx = 3;
+      if (hasHeader) {
+        header.forEach((h, i) => {
+          if (h.includes('task') && taskIdx === 0) taskIdx = i;
+          if ((h.includes('desc') || h.includes('description')) && descIdx === 1) descIdx = i;
+          if ((h.includes('urg') || h.includes('priority')) && urgencyIdx === 2) urgencyIdx = i;
+          if (h.includes('status') && statusIdx === 3) statusIdx = i;
+        });
+      } else {
+        taskIdx = 0; descIdx = 1; urgencyIdx = 2; statusIdx = 3;
+      }
+      const startRow = hasHeader ? 1 : 0;
+      const urgentRows = [];
+      for (let i = startRow; i < values.length; i++) {
+        const row = values[i] || [];
+        const urgency = (row[urgencyIdx] || '').toString().trim().toLowerCase();
+        const status = (row[statusIdx] || '').toString().trim().toLowerCase();
+        if ((urgency === 'high' || urgency === 'urgent') && status !== 'done') {
+          const task = (row[taskIdx] || '').toString().trim();
+          const desc = (row[descIdx] || '').toString().trim();
+          urgentRows.push({ row: i + 1, task, desc, urgency, status });
+        }
+      }
+      if (!urgentRows.length) return 'No urgent items found in that tab.';
+      const lines = urgentRows.map((r, idx) => `${idx+1}. Row ${r.row}: ${r.task || r.desc || '(no task text)'}${r.desc ? ' — ' + r.desc : ''}`);
+      return `Found ${urgentRows.length} urgent item(s):\n` + lines.join('\n');
+    }
+
     async function startRealtime() {
       try {
         setStatus('requesting mic…');
@@ -254,16 +278,14 @@
         dc.onopen = () => {
           log('[DC] open');
           setSendReady(true);
-          setStatus('waiting-for-session'); // not 'ready' yet
+          setStatus('waiting-for-session');
         };
 
         dc.onmessage = (evt) => {
           let msg;
           try { msg = JSON.parse(evt.data); } catch (e) { return; }
-
           log('[DC<=]', msg);
 
-          // If the server reports a response created, capture id for matching done events
           if (msg.type === 'response.created' && msg.response && msg.response.id) {
             if (window.__waitingForResponseId) {
               window.__lastResponseCreatedId = msg.response.id;
@@ -272,15 +294,12 @@
             }
           }
 
-          // Clear __responseActive when the response finishes (match by response id when available)
-          // Accept a few possible done/completed event names
           if (msg.type === 'response.done' && msg.response_id) {
             if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
               log('[INFO] response.done -> cleared __responseActive');
-              // flush any queued tool results
               flushPendingToolResults();
             }
           }
@@ -303,14 +322,6 @@
             }
           }
 
-          // Some servers emit output_item.added then later output_item.completed.
-          // If we see an output_item.added that clearly indicates final text/audio, we can optimistically clear.
-          if (msg.type === 'response.output_item.added' && msg.item && msg.item.type) {
-            // If item is an audio buffer stopped or final text piece, treat as progress; don't clear here unless status indicates completion
-            // We'll rely on the explicit completed/done events above.
-          }
-
-          // Session lifecycle
           if (msg.type === 'session.created') {
             sessionIsCreated = true;
 
@@ -363,7 +374,6 @@
 
             if (!window.__greeted) {
               window.__greeted = true;
-              // First reply only after update is confirmed
               try {
                 dc.send(JSON.stringify({
                   type: 'response.create',
@@ -379,10 +389,9 @@
             if (!window.__toolsRegistered) {
               window.__toolsRegistered = true;
 
-              // Persistent buffer for streamed tool-call arguments
               window.toolArgBuf = Object.create(null);
 
-              // Dispatcher: routes tool calls to your backend
+              // Dispatcher: routes tool calls to your backend (Docs baseline)
               window.handleToolCall = async function handleToolCall(name, args, callId) {
                 try {
                   let url = '', body = {};
@@ -394,6 +403,16 @@
                       docName: (args.docName || '').toString(),
                       folderName: (args.folderName || '').toString()
                     };
+                    const r = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify(body)
+                    });
+                    const text = await r.text();
+                    log('[TOOL] docs_read', r.status, text.slice(0, 400));
+                    await sendResponseInstructions(text);
+                    return;
                   } else if (name === 'docs_createappend') {
                     url = '/api/workspace.js?action=docs.createappend';
                     body = {
@@ -401,25 +420,21 @@
                       folderName: (args.folderName || '').toString(),
                       text: (args.text ?? '').toString()
                     };
-                  } else {
-                    const out = { error: `Unsupported tool: ${name}` };
-                    // Return error to assistant as readable instructions (safe, accepted shape)
-                    await sendResponseInstructions(JSON.stringify(out));
+                    const r = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify(body)
+                    });
+                    const text = await r.text();
+                    log('[TOOL] docs_createappend', r.status, text.slice(0, 400));
+                    await sendResponseInstructions(`OK — appended to ${body.docName || '(unnamed)'} (status ${r.status}).`);
                     return;
                   }
 
-                  const r = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify(body)
-                  });
-
-                  const text = await r.text();
-                  log('[TOOL]', name, r.status, text.slice(0, 400));
-
-                  // Send doc content as normal response.create.instructions (server accepted)
-                  await sendResponseInstructions(text);
+                  // Unsupported tool (may be extended below by Drive add-on)
+                  const out = { error: `Unsupported tool: ${name}` };
+                  await sendResponseInstructions(JSON.stringify(out));
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
                   await sendResponseInstructions(JSON.stringify(out));
@@ -467,76 +482,84 @@
               try {
                 dc.send(JSON.stringify(toolsUpdate));
                 log('[DC=>] tools session.update (Docs) sent');
-                // === DRIVE: add minimal search/list tool (non-breaking) ===
-
-// 1) Extend the existing dispatcher without breaking Docs tools
-const __prevDispatch = window.handleToolCall;
-window.handleToolCall = async function(name, args, callId) {
-  if (name === 'drive_search') {
-    try {
-      const body = {
-        name: (args?.name || '').toString(),            // partial name match (optional)
-        folderName: (args?.folderName || '').toString(),// optional folder scope
-        mimeType: (args?.mimeType || '').toString(),    // e.g. 'application/vnd.google-apps.folder'
-        pageSize: Math.max(1, Math.min(Number(args?.pageSize || 50), 200))
-      };
-      const r = await fetch('/api/workspace.js?action=drive.search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body)
-      });
-      const text = await r.text();
-
-      // Send raw JSON/text back to the assistant as a normal response
-      dc.send(JSON.stringify({
-        type: 'response.create',
-        response: { instructions: text }
-      }));
-      return; // handled
-    } catch (e) {
-      dc?.send(JSON.stringify({
-        type: 'response.create',
-        response: { instructions: JSON.stringify({ error: String(e?.message || e) }) }
-      }));
-      return; // handled with error
-    }
-  }
-
-  // Fall through to whatever you already had (Docs etc.)
-  if (typeof __prevDispatch === 'function') {
-    return __prevDispatch(name, args, callId);
-  }
-};
-
-// 2) Register the Drive tool with the model
-dc.send(JSON.stringify({
-  type: 'session.update',
-  session: {
-    tool_choice: 'auto',
-    tools: [
-      {
-        type: 'function',
-        name: 'drive_search',
-        description: "Search Google Drive for files/folders by partial name and/or mimeType, optionally inside a folder.",
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: "Partial name, e.g. 'invoice' (optional)" },
-            folderName: { type: 'string', description: "Optional parent folder name" },
-            mimeType: { type: 'string', description: "e.g. 'application/vnd.google-apps.folder' for folders" },
-            pageSize: { type: 'integer', minimum: 1, maximum: 200 }
-          },
-          required: []
-        }
-      }
-    ]
-  }
-}));
-
               } catch (e) {
                 log('[ERR] sending tools session.update', e?.message || e);
               }
+
+              /* === DRIVE ADD-ON (merge-safe) ===
+                 Inserted right after the Docs registration above.
+                 - Merges a `drive_search` tool with the existing tools list (no overwrite)
+                 - Extends the dispatcher to handle drive_search
+              */
+              try {
+                // Keep a shared tool list so later updates merge instead of overwrite
+                window.__tools = window.__tools || (toolsUpdate?.session?.tools ? toolsUpdate.session.tools.slice() : []);
+
+                function __mergeTools(add) {
+                  const byName = new Set((window.__tools || []).map(t => t.name));
+                  (add || []).forEach(t => { if (!byName.has(t.name)) { window.__tools.push(t); byName.add(t.name); } });
+                  return window.__tools;
+                }
+
+                // Preserve the Docs dispatcher; prepend Drive handling
+                const __prevDispatch = window.handleToolCall;
+                window.handleToolCall = async function(name, args, callId) {
+                  if (name === 'drive_search') {
+                    try {
+                      const body = {
+                        name: (args?.name || '').toString(),            // partial name (optional)
+                        folderName: (args?.folderName || '').toString(),// optional folder scope
+                        mimeType: (args?.mimeType || '').toString(),    // e.g. folders: application/vnd.google-apps.folder
+                        pageSize: Math.max(1, Math.min(Number(args?.pageSize || 50), 200))
+                      };
+                      const r = await fetch('/api/workspace.js?action=drive.search', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify(body)
+                      });
+                      const text = await r.text();
+
+                      // Return results to assistant; Nyx will speak/print them
+                      await sendResponseInstructions(text);
+                      return; // handled
+                    } catch (e) {
+                      await sendResponseInstructions(JSON.stringify({ error: String(e?.message || e) }));
+                      return; // handled with error
+                    }
+                  }
+                  // Fall-through to Docs tools
+                  if (typeof __prevDispatch === 'function') return __prevDispatch(name, args, callId);
+                };
+
+                // Merge and register Drive tool without clobbering Docs
+                const merged = __mergeTools([
+                  {
+                    type: 'function',
+                    name: 'drive_search',
+                    description: "Search Google Drive for files/folders by partial name and/or mimeType, optionally inside a named folder.",
+                    parameters: {
+                      type: 'object',
+                      properties: {
+                        name: { type: 'string', description: "Partial name (e.g. 'invoice') — optional" },
+                        folderName: { type: 'string', description: "Optional parent folder name" },
+                        mimeType: { type: 'string', description: "e.g. 'application/vnd.google-apps.folder' for folders, 'application/vnd.google-apps.spreadsheet' for Sheets" },
+                        pageSize: { type: 'integer', minimum: 1, maximum: 200 }
+                      },
+                      required: []
+                    }
+                  }
+                ]);
+
+                dc.send(JSON.stringify({
+                  type: 'session.update',
+                  session: { tool_choice: 'auto', tools: merged }
+                }));
+                log('[DC=>] tools session.update (Docs + Drive) sent');
+              } catch (e) {
+                log('[ERR] drive add-on setup', e?.message || e);
+              }
+              /* === END DRIVE ADD-ON === */
             }
             return;
           }
@@ -558,7 +581,6 @@ dc.send(JSON.stringify({
               t === 'response.tool_call.arguments.done';
 
             if ((isDelta || isDone) && !window.__toolsRegistered) {
-              // Ignore any early tool-call fragments until tools are registered
               return;
             }
 
@@ -631,7 +653,6 @@ dc.send(JSON.stringify({
       pc = null; mic = null; dc = null; audioEl.srcObject = null;
       setSendReady(false);
       setStatus('idle');
-      // clear response state and pending queue when stopping
       window.__responseActive = false;
       window.__waitingForResponseId = false;
       window.__lastResponseCreatedId = null;
