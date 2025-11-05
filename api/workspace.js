@@ -348,6 +348,42 @@ async function actSheetsUpdateCell(req, res, tokens) {
   return json(res, 200, { ok: true, file, updatedRange: r.data.updatedRange || range });
 }
 
+// --- Web Search using SerpAPI ---
+async function actWebSearch(req, res /*, tokens */) {
+  const b = parseBody(req);
+  const query = (b.query || '').toString().trim();
+  const num = Math.max(1, Math.min(Number(b.num || 5), 10));
+  const site = (b.site || '').toString().trim();
+  const freshnessDays = Math.max(0, Math.min(Number(b.freshnessDays || 0), 365));
+  if (!query) return json(res, 400, { error: 'query is required' });
+
+  if (!process.env.SERPAPI_KEY)
+    return json(res, 500, { error: 'Missing SERPAPI_KEY in environment' });
+
+  const searchUrl = new URL('https://serpapi.com/search.json');
+  searchUrl.searchParams.set('engine', 'google');
+  searchUrl.searchParams.set('q', site ? `${query} site:${site}` : query);
+  searchUrl.searchParams.set('api_key', process.env.SERPAPI_KEY);
+  searchUrl.searchParams.set('num', num.toString());
+  if (freshnessDays > 0) {
+    const dateRestrict = `d${Math.min(365, freshnessDays)}`;
+    searchUrl.searchParams.set('tbs', `qdr:${dateRestrict}`);
+  }
+
+  const r = await fetch(searchUrl.href);
+  if (!r.ok) return json(res, r.status, { error: `SerpAPI ${r.status}` });
+  const j = await r.json();
+
+  const results = (j.organic_results || []).slice(0, num).map(it => ({
+    title: it.title,
+    url: it.link,
+    snippet: it.snippet || ''
+  }));
+
+  return json(res, 200, { ok: true, results });
+}
+
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -385,6 +421,8 @@ async function actDriveListRoot(req, res, tokens) {
     if (action === 'sheets.appendrow')  return await actSheetsAppendRow(req, res, tokens);
     if (action === 'sheets.updatecell') return await actSheetsUpdateCell(req, res, tokens);
     if (action === 'drive.listroot')   return await actDriveListRoot(req, res, tokens);
+    if (action === 'web.search') return await actWebSearch(req, res, tokens);
+
     
     return json(res, 400, {
       error: 'Unknown or missing action.',
