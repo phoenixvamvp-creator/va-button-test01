@@ -704,5 +704,91 @@
       if (e.key === 'Enter') { e.preventDefault(); if (!sendBtn.disabled) sendBtn.click(); }
     });
   </script>
+  <script type="module">
+/* === OPTIONAL WEB SEARCH TOOLS (SerpAPI via /api/workspace.js?action=web.search) === */
+(function(){
+  const DEBUG = true;
+  function dbg(...a){ if (DEBUG) console.log('[WEB-SEARCH]', ...a); }
+
+  // Send a normal assistant message with the results (no dependency on other modules)
+  async function speakToAssistant(text){
+    try{
+      if(!window.dc || window.dc.readyState !== 'open'){ dbg('dc not open'); return; }
+      window.dc.send(JSON.stringify({ type:'response.create', response:{ instructions: String(text) }}));
+    }catch(e){ console.error('[WEB-SEARCH] speak err', e); }
+  }
+
+  async function callWebSearch(args){
+    const body = {
+      query: (args?.query || '').toString(),
+      num: Math.max(1, Math.min(Number(args?.num ?? 5), 10)),
+      site: (args?.site || '').toString(),
+      freshnessDays: Math.max(0, Math.min(Number(args?.freshnessDays ?? 0), 365))
+    };
+    if(!body.query){ await speakToAssistant('web_search: query is required'); return; }
+
+    const r = await fetch('/api/workspace.js?action=web.search', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      credentials:'include', body: JSON.stringify(body)
+    });
+    const raw = await r.text();
+    dbg('web.search', r.status, raw.slice(0,300));
+
+    // Format a friendly summary if JSON, otherwise relay raw text
+    try{
+      const j = JSON.parse(raw);
+      if(Array.isArray(j.results) && j.results.length){
+        const lines = j.results.map((it,i)=>`${i+1}. ${it.title}\n   ${it.url}\n   – ${it.snippet||''}`);
+        await speakToAssistant(`Top ${j.results.length} result(s):\n` + lines.join('\n'));
+        return;
+      }
+      await speakToAssistant(raw);
+    }catch{
+      await speakToAssistant(raw);
+    }
+  }
+
+  // Wrap handleToolCall so the VA can invoke "web_search"
+  const prev = window.handleToolCall;
+  window.handleToolCall = async function(name, args, callId){
+    if(name === 'web_search'){ await callWebSearch(args||{}); return; }
+    if(typeof prev === 'function') return prev(name, args, callId);
+  };
+
+  // Register the tool with the model once DataChannel is open (retry politely)
+  function registerTool(){
+    if(!window.dc || window.dc.readyState !== 'open') return false;
+    const payload = {
+      type:'session.update',
+      session:{
+        tool_choice:'auto',
+        tools:[{
+          type:'function',
+          name:'web_search',
+          description:'Searches the public web and returns summarized results.',
+          parameters:{
+            type:'object',
+            properties:{
+              query:{type:'string', description:'Search query text'},
+              num:{type:'integer', minimum:1, maximum:10, description:'How many results (default 5)'},
+              site:{type:'string', description:'Optional site filter, e.g. example.com'},
+              freshnessDays:{type:'integer', minimum:0, maximum:365, description:'Only recent results (0 = any time)'}
+            },
+            required:['query']
+          }
+        }]
+      }
+    };
+    try{ window.dc.send(JSON.stringify(payload)); dbg('tool registered'); return true; }
+    catch(e){ console.error('[WEB-SEARCH] register err', e); return false; }
+  }
+
+  // Try immediately, then poll briefly until dc opens
+  if(!registerTool()){
+    let tries = 0;
+    const t = setInterval(()=>{ tries++; if(registerTool() || tries>30) clearInterval(t); }, 1000);
+  }
+})();
+</script>
 </body>
 </html>
