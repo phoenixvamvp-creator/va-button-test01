@@ -219,6 +219,50 @@
       }
     });
 
+    // Helper: convert a sheets.values array into a readable TTS string of urgent tasks
+    function buildUrgentTextFromValues(values) {
+      if (!Array.isArray(values) || !values.length) return 'No data returned from sheet.';
+      // try to detect header row
+      const header = values[0].map(h => (h||'').toString().trim().toLowerCase());
+      const hasHeader = header.some(h => h.includes('task') || h.includes('urgency') || h.includes('status') || h.includes('task/job'));
+      let taskIdx = 0, descIdx = 1, urgencyIdx = 2, statusIdx = 3;
+      if (hasHeader) {
+        // find indices by header name heuristics
+        header.forEach((h, i) => {
+          if (h.includes('task') && taskIdx === 0) taskIdx = i;
+          if ((h.includes('desc') || h.includes('description')) && descIdx === 1) descIdx = i;
+          if ((h.includes('urg') || h.includes('priority')) && urgencyIdx === 2) urgencyIdx = i;
+          if (h.includes('status') && statusIdx === 3) statusIdx = i;
+        });
+      } else {
+        // use defaults (A,B,C,D)
+        taskIdx = 0; descIdx = 1; urgencyIdx = 2; statusIdx = 3;
+      }
+
+      // starting index for rows (skip header if present)
+      const startRow = hasHeader ? 1 : 0;
+      const urgentRows = [];
+      for (let i = startRow; i < values.length; i++) {
+        const row = values[i] || [];
+        const urgency = (row[urgencyIdx] || '').toString().trim().toLowerCase();
+        const status = (row[statusIdx] || '').toString().trim().toLowerCase();
+        if ((urgency === 'high' || urgency === 'urgent') && status !== 'done') {
+          const task = (row[taskIdx] || '').toString().trim();
+          const desc = (row[descIdx] || '').toString().trim();
+          // note spreadsheet row number for reference
+          const sheetRowNum = i + 1; // 1-based
+          urgentRows.push({ row: sheetRowNum, task, desc, urgency, status });
+        }
+      }
+
+      if (!urgentRows.length) return 'No urgent items found in that tab.';
+      const lines = urgentRows.map((r, idx) => {
+        const base = `${idx+1}. Row ${r.row}: ${r.task || r.desc || '(no task text)'}${r.desc ? ' — ' + r.desc : ''}`;
+        return base;
+      });
+      return `Found ${urgentRows.length} urgent item(s):\n` + lines.join('\n');
+    }
+
     async function startRealtime() {
       try {
         setStatus('requesting mic…');
@@ -394,6 +438,16 @@
                       docName: (args.docName || '').toString(),
                       folderName: (args.folderName || '').toString()
                     };
+                    const r = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify(body)
+                    });
+                    const text = await r.text();
+                    log('[TOOL] docs_read', r.status, text.slice(0, 400));
+                    await sendResponseInstructions(text);
+                    return;
                   } else if (name === 'docs_createappend') {
                     url = '/api/workspace.js?action=docs.createappend';
                     body = {
@@ -401,25 +455,21 @@
                       folderName: (args.folderName || '').toString(),
                       text: (args.text ?? '').toString()
                     };
-                  } else {
-                    const out = { error: `Unsupported tool: ${name}` };
-                    // Return error to assistant as readable instructions (safe, accepted shape)
-                    await sendResponseInstructions(JSON.stringify(out));
+                    const r = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify(body)
+                    });
+                    const text = await r.text();
+                    log('[TOOL] docs_createappend', r.status, text.slice(0, 400));
+                    await sendResponseInstructions(`OK — appended to ${body.docName || '(unnamed)'} (status ${r.status}).`);
                     return;
                   }
 
-                  const r = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                    body: JSON.stringify(body)
-                  });
-
-                  const text = await r.text();
-                  log('[TOOL]', name, r.status, text.slice(0, 400));
-
-                  // Send doc content as normal response.create.instructions (server accepted)
-                  await sendResponseInstructions(text);
+                  // Unsupported tool
+                  const out = { error: `Unsupported tool: ${name}` };
+                  await sendResponseInstructions(JSON.stringify(out));
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
                   await sendResponseInstructions(JSON.stringify(out));
@@ -616,5 +666,300 @@
       if (e.key === 'Enter') { e.preventDefault(); if (!sendBtn.disabled) sendBtn.click(); }
     });
   </script>
+
+  <!-- BEGIN OPTIONAL / REMOVABLE DRIVE TOOLS SECTION
+       This block is modular and self-contained. You can remove or comment it out
+       without affecting OAuth, realtime, or Docs functionality.
+       It registers Drive tools and handles drive_search / drive_find_file / drive_list_root / drive_list_folder.
+       To remove: delete the entire <script>...</script> block below.
+  -->
+  <script type="module">
+    (function() {
+      const DEBUG = true;
+      const TOOLS_FLAG = '__driveToolsRegistered';
+      function dbg(...args){ if (DEBUG) console.log('[DRIVE-TOOLS]', ...args); }
+
+      function safeSendResponseToAssistant(text) {
+        try {
+          if (!window.dc || window.dc.readyState !== 'open') {
+            dbg('dc not open; cannot send response.create');
+            return false;
+          }
+          const payload = { type: 'response.create', response: { instructions: typeof text === 'string' ? text : JSON.stringify(text) } };
+          window.dc.send(JSON.stringify(payload));
+          dbg('sent response.create ->', (typeof text === 'string' ? text.slice(0,200) : JSON.stringify(text).slice(0,200)).replace(/\n/g,' '));
+          return true;
+        } catch (e) {
+          console.error('[DRIVE-TOOLS] send err', e);
+          return false;
+        }
+      }
+
+      async function callWorkspace(action, body) {
+        try {
+          const res = await fetch(`/api/workspace.js?action=${encodeURIComponent(action)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(body || {})
+          });
+          const text = await res.text();
+          dbg('[TOOLCALL]', action, res.status, text.slice(0,400));
+          let json = null;
+          try { json = JSON.parse(text); } catch {}
+          return { ok: res.ok, status: res.status, text, json };
+        } catch (e) {
+          dbg('[TOOLCALL] network error', e?.message || e);
+          return { ok: false, status: 0, text: String(e?.message || e), json: null };
+        }
+      }
+
+      function formatDriveSearchResults(json) {
+        if (!json) return 'No result returned.';
+        if (!json.ok && json.error) return `Error: ${JSON.stringify(json)}`;
+        const files = json.files || (json.data && json.data.files) || [];
+        if (!files || !files.length) return 'No files found.';
+        const lines = files.map((f, i) => {
+          const owner = (f.owners && f.owners[0] && f.owners[0].displayName) ? f.owners[0].displayName : (f.owner || '');
+          const mod = f.modifiedTime || f.modified || '';
+          const mime = f.mimeType || f.mime || '';
+          return `${i+1}. ${f.name} (id: ${f.id}) — ${mime}${owner ? ' — owner: ' + owner : ''}${mod ? ' — modified: ' + mod : ''}`;
+        });
+        return `Found ${files.length} item(s):\n` + lines.join('\n');
+      }
+
+      // Tool handlers
+      async function driveHandler(name, args) {
+        try {
+          if (name === 'drive_search' || name === 'drive_find') {
+            const nameQ = (args.name || args.query || '').toString();
+            const folderName = (args.folderName || '').toString();
+            const mimeType = (args.mimeType || '').toString();
+            const pageSize = Math.max(1, Math.min(Number(args.pageSize || 50), 200));
+            if (!nameQ) {
+              safeSendResponseToAssistant(JSON.stringify({ error: 'name parameter required' }));
+              return true;
+            }
+            const out = await callWorkspace('drive.search', { name: nameQ, folderName, mimeType, pageSize });
+            if (!out.ok) {
+              safeSendResponseToAssistant(out.text);
+            } else {
+              const text = formatDriveSearchResults(out.json || out);
+              safeSendResponseToAssistant(`Search results for "${nameQ}":\n${text}`);
+            }
+            return true;
+          }
+
+          if (name === 'drive_find_file' || name === 'drive_find') {
+            const nameQ = (args.name || '').toString();
+            const folderName = (args.folderName || '').toString();
+            const mimeType = (args.mimeType || '').toString();
+            if (!nameQ) {
+              safeSendResponseToAssistant(JSON.stringify({ error: 'name parameter required' }));
+              return true;
+            }
+            const out = await callWorkspace('drive.search', { name: nameQ, folderName, mimeType, pageSize: 10 });
+            if (!out.ok) {
+              safeSendResponseToAssistant(out.text);
+              return true;
+            }
+            const files = out.json?.files || [];
+            if (!files.length) {
+              safeSendResponseToAssistant(`No files found for "${nameQ}".`);
+              return true;
+            }
+            const best = files[0];
+            safeSendResponseToAssistant(`Found: ${best.name} (id: ${best.id}). Modified: ${best.modifiedTime || ''}. MIME: ${best.mimeType || ''}`);
+            return true;
+          }
+
+          if (name === 'drive_list_root' || name === 'drive_list') {
+            const pageSize = Math.max(1, Math.min(Number(args.pageSize || 100), 500));
+            const out = await callWorkspace('drive.listroot', { pageSize });
+            if (!out.ok) {
+              safeSendResponseToAssistant(out.text);
+            } else {
+              const text = formatDriveSearchResults(out.json || out);
+              safeSendResponseToAssistant(`Root folder contents:\n${text}`);
+            }
+            return true;
+          }
+
+          if (name === 'drive_list_folder') {
+            const folderName = (args.folderName || '').toString();
+            if (!folderName) {
+              safeSendResponseToAssistant(JSON.stringify({ error: 'folderName required' }));
+              return true;
+            }
+            const out = await callWorkspace('drive.search', { name: '', folderName, pageSize: 200, mimeType: '' });
+            if (!out.ok) {
+              safeSendResponseToAssistant(out.text);
+            } else {
+              const text = formatDriveSearchResults(out.json || out);
+              safeSendResponseToAssistant(`Contents of folder "${folderName}":\n${text}`);
+            }
+            return true;
+          }
+
+          return false;
+        } catch (e) {
+          safeSendResponseToAssistant(JSON.stringify({ error: String(e?.message || e) }));
+          return true;
+        }
+      }
+
+      // Tools registration payload
+      function buildDriveToolsUpdate() {
+        return {
+          type: 'session.update',
+          session: {
+            tool_choice: 'auto',
+            tools: [
+              {
+                type: 'function',
+                name: 'drive_search',
+                description: 'Search Drive for files/folders by name (partial).',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    folderName: { type: 'string' },
+                    mimeType: { type: 'string' },
+                    pageSize: { type: 'number' }
+                  },
+                  required: ['name']
+                }
+              },
+              {
+                type: 'function',
+                name: 'drive_find_file',
+                description: 'Find a single file by name (best match).',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string' },
+                    folderName: { type: 'string' },
+                    mimeType: { type: 'string' }
+                  },
+                  required: ['name']
+                }
+              },
+              {
+                type: 'function',
+                name: 'drive_list_root',
+                description: 'List files at Drive root (limited).',
+                parameters: { type: 'object', properties: { pageSize: { type: 'number' } }, required: [] }
+              },
+              {
+                type: 'function',
+                name: 'drive_list_folder',
+                description: 'List items inside a named folder (uses folderName).',
+                parameters: {
+                  type: 'object',
+                  properties: { folderName: { type: 'string' }, pageSize: { type: 'number' } },
+                  required: ['folderName']
+                }
+              }
+            ]
+          }
+        };
+      }
+
+      // Register tools when dc is open (tries periodically)
+      function tryRegisterDriveTools() {
+        if (window[TOOLS_FLAG]) { dbg('drive tools already registered'); return; }
+        const attempt = () => {
+          if (!window.dc || window.dc.readyState !== 'open') {
+            dbg('waiting for dc to open...');
+            return false;
+          }
+          try {
+            const payload = buildDriveToolsUpdate();
+            window.dc.send(JSON.stringify(payload));
+            dbg('drive toolsUpdate sent');
+            window[TOOLS_FLAG] = true;
+            return true;
+          } catch (e) {
+            console.error('[DRIVE-TOOLS] send toolsUpdate failed', e);
+            return false;
+          }
+        };
+        let tries = 0;
+        const timer = setInterval(() => {
+          tries++;
+          const ok = attempt();
+          if (ok || tries > 30) clearInterval(timer);
+        }, 1000);
+      }
+
+      // Wrap existing handleToolCall safely so drive names are handled first
+      function installWrapper() {
+        const orig = window.handleToolCall;
+        if (orig && orig.__driveWrapped) { dbg('handleToolCall already wrapped'); return; }
+
+        window.handleToolCall = async function(name, args, callId) {
+          try {
+            const handled = await driveHandler(name, args || {});
+            if (handled) return;
+          } catch (e) {
+            console.error('[DRIVE-TOOLS] handler error', e);
+          }
+          if (typeof orig === 'function') {
+            try {
+              return await orig(name, args, callId);
+            } catch (e) {
+              console.error('[DRIVE-TOOLS] original handleToolCall error', e);
+            }
+          } else {
+            dbg('no original handleToolCall to forward to for', name);
+            safeSendResponseToAssistant(JSON.stringify({ error: `Unsupported tool: ${name}` }));
+          }
+        };
+        window.handleToolCall.__driveWrapped = true;
+        dbg('installed drive handleToolCall wrapper');
+      }
+
+      // Try to wrap and register when page loads; non-invasive polling
+      (function init() {
+        dbg('init drive-tools');
+        const wrapTimer = setInterval(() => {
+          if (window.handleToolCall) {
+            installWrapper();
+            clearInterval(wrapTimer);
+          }
+        }, 500);
+
+        // register drive tools when dc opens
+        tryRegisterDriveTools();
+
+        // Also watch for dc being created later; attempt to register tools again if needed
+        const dcWatcher = setInterval(() => {
+          if (window[TOOLS_FLAG]) { clearInterval(dcWatcher); return; }
+          if (window.dc && window.dc.readyState === 'open') {
+            tryRegisterDriveTools();
+          }
+        }, 1000);
+      })();
+
+      // expose a simple API so this block can be removed or controlled
+      window.__driveTools = {
+        installed: true,
+        unregister() {
+          try {
+            if (window.handleToolCall && window.handleToolCall.__driveWrapped) {
+              // best effort: cannot fully restore original if we didn't save it; suggest page reload
+              dbg('unregister called — please reload page to fully remove wrapper if needed');
+            }
+            window[TOOLS_FLAG] = false;
+            dbg('drive tools unregistered flag cleared');
+          } catch (e) {
+            dbg('unregister error', e);
+          }
+        }
+      };
+    })();
+  </script>
+  <!-- END OPTIONAL / REMOVABLE DRIVE TOOLS SECTION -->
+
 </body>
 </html>
