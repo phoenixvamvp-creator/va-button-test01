@@ -219,50 +219,6 @@
       }
     });
 
-    // Helper: convert a sheets.values array into a readable TTS string of urgent tasks
-    function buildUrgentTextFromValues(values) {
-      if (!Array.isArray(values) || !values.length) return 'No data returned from sheet.';
-      // try to detect header row
-      const header = values[0].map(h => (h||'').toString().trim().toLowerCase());
-      const hasHeader = header.some(h => h.includes('task') || h.includes('urgency') || h.includes('status') || h.includes('task/job'));
-      let taskIdx = 0, descIdx = 1, urgencyIdx = 2, statusIdx = 3;
-      if (hasHeader) {
-        // find indices by header name heuristics
-        header.forEach((h, i) => {
-          if (h.includes('task') && taskIdx === 0) taskIdx = i;
-          if ((h.includes('desc') || h.includes('description')) && descIdx === 1) descIdx = i;
-          if ((h.includes('urg') || h.includes('priority')) && urgencyIdx === 2) urgencyIdx = i;
-          if (h.includes('status') && statusIdx === 3) statusIdx = i;
-        });
-      } else {
-        // use defaults (A,B,C,D)
-        taskIdx = 0; descIdx = 1; urgencyIdx = 2; statusIdx = 3;
-      }
-
-      // starting index for rows (skip header if present)
-      const startRow = hasHeader ? 1 : 0;
-      const urgentRows = [];
-      for (let i = startRow; i < values.length; i++) {
-        const row = values[i] || [];
-        const urgency = (row[urgencyIdx] || '').toString().trim().toLowerCase();
-        const status = (row[statusIdx] || '').toString().trim().toLowerCase();
-        if ((urgency === 'high' || urgency === 'urgent') && status !== 'done') {
-          const task = (row[taskIdx] || '').toString().trim();
-          const desc = (row[descIdx] || '').toString().trim();
-          // note spreadsheet row number for reference
-          const sheetRowNum = i + 1; // 1-based
-          urgentRows.push({ row: sheetRowNum, task, desc, urgency, status });
-        }
-      }
-
-      if (!urgentRows.length) return 'No urgent items found in that tab.';
-      const lines = urgentRows.map((r, idx) => {
-        const base = `${idx+1}. Row ${r.row}: ${r.task || r.desc || '(no task text)'}${r.desc ? ' — ' + r.desc : ''}`;
-        return base;
-      });
-      return `Found ${urgentRows.length} urgent item(s):\n` + lines.join('\n');
-    }
-
     async function startRealtime() {
       try {
         setStatus('requesting mic…');
@@ -431,7 +387,6 @@
                 try {
                   let url = '', body = {};
 
-                  // DOCS: read / createappend (left unchanged)
                   if (name === 'docs_read') {
                     url = '/api/workspace.js?action=docs.read';
                     body = {
@@ -439,16 +394,6 @@
                       docName: (args.docName || '').toString(),
                       folderName: (args.folderName || '').toString()
                     };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] docs_read', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(text);
-                    return;
                   } else if (name === 'docs_createappend') {
                     url = '/api/workspace.js?action=docs.createappend';
                     body = {
@@ -456,228 +401,32 @@
                       folderName: (args.folderName || '').toString(),
                       text: (args.text ?? '').toString()
                     };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] docs_createappend', r.status, text.slice(0, 400));
-                    await sendResponseInstructions(`OK — appended to ${body.docName || '(unnamed)'} (status ${r.status}).`);
+                  } else {
+                    const out = { error: `Unsupported tool: ${name}` };
+                    // Return error to assistant as readable instructions (safe, accepted shape)
+                    await sendResponseInstructions(JSON.stringify(out));
                     return;
                   }
 
-                  // --- SHEETS support (new, modular additions) ---
-                  // sheets_read: simple pass-through read of a range/tab (returns raw values as JSON -> spoken text)
-                  if (name === 'sheets_read') {
-                    url = '/api/workspace.js?action=sheets.read';
-                    body = {
-                      fileName: (args.fileName || args.spreadsheetName || '').toString(),
-                      folderName: (args.folderName || '').toString(),
-                      tab: (args.tab || args.sheetName || '').toString(),
-                      range: (args.range || '').toString()
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_read', r.status, text.slice(0, 400));
-                    // Forward raw JSON text so assistant can inspect if needed
-                    await sendResponseInstructions(text);
-                    return;
-                  }
+                  const r = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(body)
+                  });
 
-                  // sheets_find_urgent: find urgent/high items in a tab and return readable list
-                  if (name === 'sheets_find_urgent' || name === 'sheets_find_high_priority') {
-                    const fileName = (args.fileName || args.spreadsheetName || '').toString();
-                    const tab = (args.tab || args.sheetName || '').toString();
-                    if (!fileName) {
-                      await sendResponseInstructions(JSON.stringify({ error: 'fileName (spreadsheet name) is required' }));
-                      return;
-                    }
-                    // Call workspace endpoint
-                    const r = await fetch('/api/workspace.js?action=sheets.read', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ fileName, folderName: (args.folderName||'').toString(), tab })
-                    });
-                    const jsonText = await r.text();
-                    log('[TOOL] sheets_find_urgent', r.status, jsonText.slice(0,400));
-                    let parsed;
-                    try { parsed = JSON.parse(jsonText); } catch { parsed = null; }
-                    if (!parsed || !parsed.ok) {
-                      // forward error message
-                      await sendResponseInstructions(jsonText);
-                      return;
-                    }
-                    const values = parsed.values || [];
-                    const tts = buildUrgentTextFromValues(values);
-                    await sendResponseInstructions(`Spreadsheet: ${parsed.file?.name || fileName}, Tab: ${tab || '(default)'}.\n` + tts);
-                    return;
-                  }
+                  const text = await r.text();
+                  log('[TOOL]', name, r.status, text.slice(0, 400));
 
-                  // sheets_mark_complete: mark a task as Done and promote the next incomplete row's urgency to High
-                  if (name === 'sheets_mark_complete') {
-                    const fileName = (args.fileName || args.spreadsheetName || '').toString();
-                    const tab = (args.tab || args.sheetName || '').toString() || 'Sheet1';
-                    const matchText = (args.taskText || args.matchText || '').toString().trim();
-                    const rowNumberArg = args.rowNumber ? Number(args.rowNumber) : null;
-                    if (!fileName) {
-                      await sendResponseInstructions(JSON.stringify({ error: 'fileName (spreadsheet name) is required' }));
-                      return;
-                    }
-                    // Read the entire tab
-                    const rRead = await fetch('/api/workspace.js?action=sheets.read', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ fileName, folderName: (args.folderName||'').toString(), tab })
-                    });
-                    const raw = await rRead.text();
-                    log('[TOOL] sheets_mark_complete/read', rRead.status, raw.slice(0,400));
-                    let parsed;
-                    try { parsed = JSON.parse(raw); } catch { parsed = null; }
-                    if (!parsed || !parsed.ok) {
-                      await sendResponseInstructions(raw);
-                      return;
-                    }
-                    const values = parsed.values || [];
-                    if (!values.length) {
-                      await sendResponseInstructions('Sheet is empty or could not be read.');
-                      return;
-                    }
-
-                    // detect header & column indices
-                    const headerRow = values[0].map(h => (h||'').toString().trim().toLowerCase());
-                    const hasHeader = headerRow.some(h => h.includes('task') || h.includes('urgency') || h.includes('status') || h.includes('task/job'));
-                    const startRowIndex = hasHeader ? 1 : 0;
-                    // default col indexes
-                    let taskIdx = 0, descIdx = 1, urgencyIdx = 2, statusIdx = 3;
-                    if (hasHeader) {
-                      headerRow.forEach((h, i) => {
-                        if (h.includes('task') && taskIdx === 0) taskIdx = i;
-                        if ((h.includes('desc') || h.includes('description')) ) descIdx = i;
-                        if ((h.includes('urg') || h.includes('priority'))) urgencyIdx = i;
-                        if (h.includes('status')) statusIdx = i;
-                      });
-                    }
-
-                    // find target row index in values array (0-based)
-                    let targetIdx = -1;
-                    if (rowNumberArg) {
-                      // user provided sheet row number (1-based); translate to values index
-                      const sheetRowNumber = rowNumberArg;
-                      const valuesIndex = sheetRowNumber - 1;
-                      if (valuesIndex >= startRowIndex && valuesIndex < values.length) {
-                        targetIdx = valuesIndex;
-                      }
-                    } else if (matchText) {
-                      // find by task or description (case-insensitive, first match)
-                      const search = matchText.toLowerCase();
-                      for (let i = startRowIndex; i < values.length; i++) {
-                        const row = values[i] || [];
-                        const taskCell = (row[taskIdx] || '').toString().toLowerCase();
-                        const descCell = (row[descIdx] || '').toString().toLowerCase();
-                        if (taskCell.includes(search) || descCell.includes(search) || (taskCell === search) ) {
-                          targetIdx = i;
-                          break;
-                        }
-                      }
-                    } else {
-                      await sendResponseInstructions('Please provide taskText or rowNumber to identify which task to mark complete.');
-                      return;
-                    }
-
-                    if (targetIdx < startRowIndex || targetIdx >= values.length) {
-                      await sendResponseInstructions(`Could not find the task to mark complete (matched index: ${targetIdx}).`);
-                      return;
-                    }
-
-                    // compute correct sheet row number
-                    const sheetRowNumber = targetIdx + 1; // 1-based
-                    const statusColLetter = String.fromCharCode('A'.charCodeAt(0) + statusIdx);
-                    const urgencyColLetter = String.fromCharCode('A'.charCodeAt(0) + urgencyIdx);
-
-                    // update status -> Done
-                    const statusCell = `${tab}!${statusColLetter}${sheetRowNumber}`;
-                    const rUpdateStatus = await fetch('/api/workspace.js?action=sheets.updatecell', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ fileName, folderName: (args.folderName||'').toString(), tab, cell: `${statusColLetter}${sheetRowNumber}`, value: 'Done' })
-                    });
-                    const uStatusText = await rUpdateStatus.text();
-                    log('[TOOL] sheets_mark_complete/updateStatus', rUpdateStatus.status, uStatusText.slice(0,400));
-
-                    // find next incomplete row below targetIdx
-                    let promoted = null;
-                    for (let i = targetIdx + 1; i < values.length; i++) {
-                      const row = values[i] || [];
-                      const status = (row[statusIdx] || '').toString().trim().toLowerCase();
-                      if (status && status === 'done') continue;
-                      // found candidate; set urgency to High (or 'urgent')
-                      const promoteRowNumber = i + 1;
-                      const promoteCell = `${tab}!${urgencyColLetter}${promoteRowNumber}`;
-                      const rProm = await fetch('/api/workspace.js?action=sheets.updatecell', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        credentials: 'include',
-                        body: JSON.stringify({ fileName, folderName: (args.folderName||'').toString(), tab, cell: `${urgencyColLetter}${promoteRowNumber}`, value: 'High' })
-                      });
-                      const promText = await rProm.text();
-                      log('[TOOL] sheets_mark_complete/promote', rProm.status, promText.slice(0,400));
-                      if (rProm.ok) {
-                        promoted = { row: promoteRowNumber, cell: `${urgencyColLetter}${promoteRowNumber}` };
-                      }
-                      break;
-                    }
-
-                    let reply = `Marked row ${sheetRowNumber} as Done in ${fileName} / ${tab}.`;
-                    if (promoted) {
-                      reply += ` Promoted row ${promoted.row} priority to High (cell ${promoted.cell}).`;
-                    } else {
-                      reply += ' No next incomplete row found to promote.';
-                    }
-                    await sendResponseInstructions(reply);
-                    return;
-                  }
-
-                  // sheets_appendrow: append a row of values (array)
-                  if (name === 'sheets_appendrow') {
-                    url = '/api/workspace.js?action=sheets.appendrow';
-                    body = {
-                      fileName: (args.fileName || args.spreadsheetName || '').toString(),
-                      folderName: (args.folderName || '').toString(),
-                      tab: (args.tab || '').toString() || 'Sheet1',
-                      values: args.values || []
-                    };
-                    const r = await fetch(url, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify(body)
-                    });
-                    const text = await r.text();
-                    log('[TOOL] sheets_appendrow', r.status, text.slice(0,400));
-                    await sendResponseInstructions(`OK — appended row to ${body.fileName || '(unnamed)'} (status ${r.status}).`);
-                    return;
-                  }
-
-                  // fallback: unsupported tool
-                  const out = { error: `Unsupported tool: ${name}` };
-                  await sendResponseInstructions(JSON.stringify(out));
+                  // Send doc content as normal response.create.instructions (server accepted)
+                  await sendResponseInstructions(text);
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
                   await sendResponseInstructions(JSON.stringify(out));
                 }
               };
 
-              // Register just the Docs tools and the new Sheets tools (modular, non-invasive)
+              // Register just the Docs tools
               const toolsUpdate = {
                 type: 'session.update',
                 session: {
@@ -710,67 +459,6 @@
                         },
                         required: ['docName', 'text']
                       }
-                    },
-                    // --- Sheets tool registrations (added) ---
-                    {
-                      type: 'function',
-                      name: 'sheets_read',
-                      description: 'Read a Google Sheet by fileName and tab/range. Returns raw JSON with values.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          fileName: { type: 'string', description: 'Spreadsheet name to read' },
-                          folderName: { type: 'string', description: 'Optional parent folder; omit for root' },
-                          tab: { type: 'string', description: 'Tab name (sheet) to read' },
-                          range: { type: 'string', description: 'A1 range to read (optional)' }
-                        },
-                        required: ['fileName']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_find_urgent',
-                      description: 'Find rows marked High/Urgent in the given spreadsheet tab and return a readable list.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          fileName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          tab: { type: 'string' }
-                        },
-                        required: ['fileName', 'tab']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_mark_complete',
-                      description: 'Mark a task as Done (by taskText or rowNumber) and promote the next incomplete row priority to High.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          fileName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          tab: { type: 'string' },
-                          taskText: { type: 'string', description: 'Task text to find (preferred)' },
-                          rowNumber: { type: 'number', description: 'Optional explicit sheet row number (1-based)' }
-                        },
-                        required: ['fileName']
-                      }
-                    },
-                    {
-                      type: 'function',
-                      name: 'sheets_appendrow',
-                      description: 'Append a row to a spreadsheet tab; values is an array-of-cells.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          fileName: { type: 'string' },
-                          folderName: { type: 'string' },
-                          tab: { type: 'string' },
-                          values: { type: 'array' }
-                        },
-                        required: ['fileName', 'values']
-                      }
                     }
                   ]
                 }
@@ -778,7 +466,7 @@
 
               try {
                 dc.send(JSON.stringify(toolsUpdate));
-                log('[DC=>] tools session.update (Docs + Sheets) sent');
+                log('[DC=>] tools session.update (Docs) sent');
               } catch (e) {
                 log('[ERR] sending tools session.update', e?.message || e);
               }
