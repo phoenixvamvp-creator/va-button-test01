@@ -467,6 +467,73 @@
               try {
                 dc.send(JSON.stringify(toolsUpdate));
                 log('[DC=>] tools session.update (Docs) sent');
+                // === DRIVE: add minimal search/list tool (non-breaking) ===
+
+// 1) Extend the existing dispatcher without breaking Docs tools
+const __prevDispatch = window.handleToolCall;
+window.handleToolCall = async function(name, args, callId) {
+  if (name === 'drive_search') {
+    try {
+      const body = {
+        name: (args?.name || '').toString(),            // partial name match (optional)
+        folderName: (args?.folderName || '').toString(),// optional folder scope
+        mimeType: (args?.mimeType || '').toString(),    // e.g. 'application/vnd.google-apps.folder'
+        pageSize: Math.max(1, Math.min(Number(args?.pageSize || 50), 200))
+      };
+      const r = await fetch('/api/workspace.js?action=drive.search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+      const text = await r.text();
+
+      // Send raw JSON/text back to the assistant as a normal response
+      dc.send(JSON.stringify({
+        type: 'response.create',
+        response: { instructions: text }
+      }));
+      return; // handled
+    } catch (e) {
+      dc?.send(JSON.stringify({
+        type: 'response.create',
+        response: { instructions: JSON.stringify({ error: String(e?.message || e) }) }
+      }));
+      return; // handled with error
+    }
+  }
+
+  // Fall through to whatever you already had (Docs etc.)
+  if (typeof __prevDispatch === 'function') {
+    return __prevDispatch(name, args, callId);
+  }
+};
+
+// 2) Register the Drive tool with the model
+dc.send(JSON.stringify({
+  type: 'session.update',
+  session: {
+    tool_choice: 'auto',
+    tools: [
+      {
+        type: 'function',
+        name: 'drive_search',
+        description: "Search Google Drive for files/folders by partial name and/or mimeType, optionally inside a folder.",
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: "Partial name, e.g. 'invoice' (optional)" },
+            folderName: { type: 'string', description: "Optional parent folder name" },
+            mimeType: { type: 'string', description: "e.g. 'application/vnd.google-apps.folder' for folders" },
+            pageSize: { type: 'integer', minimum: 1, maximum: 200 }
+          },
+          required: []
+        }
+      }
+    ]
+  }
+}));
+
               } catch (e) {
                 log('[ERR] sending tools session.update', e?.message || e);
               }
