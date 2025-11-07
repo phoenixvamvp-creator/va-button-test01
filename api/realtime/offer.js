@@ -1,5 +1,5 @@
 // api/realtime/offer.js — unchanged except envs/model
-const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-mini-realtime-preview';
+const MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime';
 const MAIN_ORIGIN = process.env.ALLOWED_ORIGIN || '';
 
 function isAllowedOrigin(origin) {
@@ -66,3 +66,4 @@ export default async function handler(req, res) {
     return res.end(`Proxy error: ${e?.message || 'unknown error'}`);
   }
 }
+
