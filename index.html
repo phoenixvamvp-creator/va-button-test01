@@ -545,7 +545,9 @@
               try {
                 dc.send(JSON.stringify({
                   type: 'response.create',
-                  response: { instructions: 'Hello! Nyx is ready.' }
+                  response: { instructions: 'You are Nyx. Speak English only unless explicitly asked to use another language. ' +
+          'Always respond in clear English. ' +
+          'Say only: "Nice tea cozy."' }
                 }));
                 log('[DC=>] response.create (greeting)');
               } catch (e) {
