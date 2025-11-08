@@ -357,20 +357,7 @@
             sessionIsUpdated = true;
             setStatus('ready');
 
-            if (!window.__greeted) {
-              window.__greeted = true;
-              try {
-                dc.send(JSON.stringify({
-                  type: 'response.create',
-                  response: { instructions: 'Hello! Nyx is ready.' }
-                }));
-                log('[DC=>] response.create (greeting)');
-              } catch (e) {
-                log('[ERR] greeting send failed', e?.message || e);
-              }
-            }
-
-            // Register Docs tools AFTER instructions are applied
+                        // Register Docs tools AFTER instructions are applied
             if (!window.__toolsRegistered) {
               window.__toolsRegistered = true;
 
@@ -550,6 +537,18 @@
           }
 
           // Handle streamed tool-call arguments (only after tools are registered)
+          if (!window.__greeted) {
+              window.__greeted = true;
+              try {
+                dc.send(JSON.stringify({
+                  type: 'response.create',
+                  response: { instructions: 'Hello! Nyx is ready.' }
+                }));
+                log('[DC=>] response.create (greeting)');
+              } catch (e) {
+                log('[ERR] greeting send failed', e?.message || e);
+              }
+            }
           {
             const t = msg.type;
 
