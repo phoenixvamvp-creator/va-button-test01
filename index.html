@@ -462,6 +462,7 @@
               } catch (e) {
                 log('[ERR] sending tools session.update', e?.message || e);
               }
+              
 
               /* === DRIVE ADD-ON (merge-safe) ===
                  Inserted right after the Docs registration above.
@@ -538,24 +539,28 @@
               }
               /* === END DRIVE ADD-ON === */
             }
+            if (!window.__greeted) {
+                  window.__greeted = true;
+                  try {
+                    dc.send(JSON.stringify({
+                      type: 'response.create',
+                      response: {
+                        instructions:
+                          'You are Nyx. Speak English only unless explicitly asked otherwise. ' +
+                          'Always respond in clear English. ' +
+                          'Say only: "Hello! Nyx is ready. Nice tea coxy."'
+                      }
+                    }));
+                    log('[DC=>] response.create (greeting)');
+                  } catch (e) {
+                    log('[ERR] greeting send failed', e?.message || e);
+                  }
+                }
             return;
           }
 
           // Handle streamed tool-call arguments (only after tools are registered)
-          if (!window.__greeted) {
-              window.__greeted = true;
-              try {
-                dc.send(JSON.stringify({
-                  type: 'response.create',
-                  response: { instructions: 'You are Nyx. Speak English only unless explicitly asked to use another language. ' +
-          'Always respond in clear English. ' +
-          'Say only: "Nice tea cozy."' }
-                }));
-                log('[DC=>] response.create (greeting)');
-              } catch (e) {
-                log('[ERR] greeting send failed', e?.message || e);
-              }
-            }
+          
           {
             const t = msg.type;
 
