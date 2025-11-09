@@ -557,43 +557,6 @@
                     log('[ERR] greeting send failed', e?.message || e);
                   }
                 }
-            if (!window.__greeted) {
-  window.__greeted = true;
-  try {
-    dc.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        instructions:
-          'You are Nyx. Speak English only unless explicitly asked otherwise. ' +
-          'Always respond in clear English. ' +
-          'Say only: "Hello! Nyx is ready."'
-      }
-    }));
-    log('[DC=>] response.create (greeting)');
-  } catch (e) {
-    log('[ERR] greeting send failed', e?.message || e);
-  }
-
-  // Reinforce instruction adherence once session is ready
-  try {
-    dc.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        modalities: ['text','audio'],
-        instructions:
-          'Nyx, read and follow your session update instructions again before replying. ' +
-        'Always remember: never invent information, never lie, and always state clearly if you cannot perform a task.'
-      }
-    }));
-    log('[DC=>] instruction reminder sent');
-  } catch (e) {
-    log('[ERR] reminder send failed', e?.message || e);
-  }
-}
-
-return;
-}
-
             return;
           }
 
