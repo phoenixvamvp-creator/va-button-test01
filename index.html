@@ -271,6 +271,7 @@
         if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
 
         dc = pc.createDataChannel('oai-events');
+        window.dc = dc;
 
         let sessionIsCreated = false;
         let sessionIsUpdated = false;
@@ -640,7 +641,7 @@
     function stopRealtime() {
       try { pc?.getSenders().forEach(s => s.track?.stop()); pc?.close(); } catch {}
       try { mic?.getTracks().forEach(t => t.stop()); } catch {}
-      pc = null; mic = null; dc = null; audioEl.srcObject = null;
+      pc = null; mic = null; dc = null; window.dc = null; audioEl.srcObject = null;
       setSendReady(false);
       setStatus('idle');
       window.__responseActive = false;
