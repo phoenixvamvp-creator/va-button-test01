@@ -337,7 +337,7 @@
                   prefix_padding_ms: 400,
                   silence_duration_ms: 1500,
                   idle_timeout_ms: 10000,
-                  create_response: false,
+                  create_response: true,
                   interrupt_response: true
                 },
                 instructions:
@@ -540,23 +540,6 @@
               }
               /* === END DRIVE ADD-ON === */
             }
-            if (!window.__greeted) {
-                  window.__greeted = true;
-                  try {
-                    dc.send(JSON.stringify({
-                      type: 'response.create',
-                      response: {
-                        instructions:
-                          'You are Nyx. Speak English only unless explicitly asked otherwise. ' +
-                          'Always respond in clear English. ' +
-                          'Say only: "Hello! Nyx is ready. Nice tea cosy."'
-                      }
-                    }));
-                    log('[DC=>] response.create (greeting)');
-                  } catch (e) {
-                    log('[ERR] greeting send failed', e?.message || e);
-                  }
-                }
             return;
           }
 
