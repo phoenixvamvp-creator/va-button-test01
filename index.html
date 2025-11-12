@@ -203,7 +203,12 @@
         return;
       }
       try {
-        dc.send(JSON.stringify({ type: 'response.create', response: { instructions: text }}));
+            dc.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        input_text: text
+      }
+    }));
         log('[TX] text prompt → response.create');
       } catch (e) {
         log('[ERR] send text:', e?.message || e);
@@ -548,7 +553,7 @@ if (!window.__greeted) {
   dc.send(JSON.stringify({
     type: 'response.create',
     response: {
-      instructions: 'Hello, I am Nyx. Awesome tea cosy.'
+      input_text: 'Hello, I am Nyx. Awesome tea cosy.'
     }
   }));
   log('[DC=>] response.create (audio test greeting)');
