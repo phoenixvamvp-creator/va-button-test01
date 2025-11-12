@@ -337,7 +337,7 @@
                   prefix_padding_ms: 400,
                   silence_duration_ms: 1500,
                   idle_timeout_ms: 10000,
-                  create_response: true,
+                  create_response: false,
                   interrupt_response: true
                 },
                 instructions:
@@ -540,6 +540,37 @@
               }
               /* === END DRIVE ADD-ON === */
             }
+            // --- Single guarded greeting + re-enable auto VAD ---
+if (!window.__greeted) {
+  window.__greeted = true;
+
+  // Force initial spoken line so audio is confirmed
+  dc.send(JSON.stringify({
+    type: 'response.create',
+    response: {
+      modalities: ['audio'], // ensure TTS
+      instructions: 'Hello, I am Nyx. Audio path check: one, two, three.'
+    }
+  }));
+  log('[DC=>] response.create (audio test greeting)');
+
+  // Now re-enable VAD auto responses for normal flow
+  dc.send(JSON.stringify({
+    type: 'session.update',
+    session: {
+      turn_detection: {
+        type: 'server_vad',
+        threshold: 0.7,
+        prefix_padding_ms: 400,
+        silence_duration_ms: 1500,
+        idle_timeout_ms: 10000,
+        create_response: true,
+        interrupt_response: true
+      }
+    }
+  }));
+  log('[DC=>] session.update (re-enable auto VAD)');
+}
             return;
           }
 
