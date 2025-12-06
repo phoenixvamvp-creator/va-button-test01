@@ -54,7 +54,6 @@
       display: inline-flex; align-items: center; gap: 10px;
       padding: 12px 18px; border-radius: 16px;
     }
-    #voiceToggle img { width: 28px; height: 28px; object-fit: contain; display: block; pointer-events: none; user-select: none; }
     #voiceToggle:hover { background: #003366; }
     .btn-outline { background: transparent; color: var(--accent); border: 1px solid rgba(255,255,255,.2); }
     input[type="text"] {
@@ -91,16 +90,23 @@
       border: 1px solid rgba(255,255,255,.08);
       background: rgba(0,0,0,.25);
       padding: 10px 12px;
-      max-height: 280px;
       overflow: auto;
       display: none;
     }
     .panel.active { display: block; }
 
+    /* Conversation panel behaviour */
     #chat {
       font-size: 13px;
       line-height: 1.4;
+      max-height: 80px;           /* collapsed height */
+      overflow: auto;
+      transition: max-height 0.2s ease;
     }
+    #chat.expanded {
+      max-height: 70vh;           /* expanded height */
+    }
+
     .msg {
       margin-bottom: 6px;
     }
@@ -114,6 +120,8 @@
       white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px; line-height: 1.4; color: #CFE2FF;
+      max-height: 280px;
+      overflow: auto;
     }
     .hint { color: var(--muted); font-size: 12px; }
   </style>
@@ -122,14 +130,13 @@
   <div class="wrap">
     <div class="brand">
       <img src="/public/logo.png" alt="Phoenix VA Logo" />
-      <h1>Phoenix VA — Realtime</h1>
+      <h1>Phoenix VA</h1>
     </div>
 
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <div class="row">
           <button id="voiceToggle">
-            <img src="/public/logo.png" alt="Phoenix VA Logo" width="56" height="56" />
             <span id="voiceLabel">Start</span>
           </button>
         </div>
@@ -166,6 +173,13 @@
     const setSendReady = (ready) => { sendBtn.disabled = !ready; };
     setSendReady(false);
 
+    // Click to expand / collapse the conversation panel
+    if (chatEl) {
+      chatEl.addEventListener('click', () => {
+        chatEl.classList.toggle('expanded');
+      });
+    }
+
     // Conversation helpers
     function appendChat(role, text, replaceLastForRole = false) {
       if (!text) return;
@@ -174,9 +188,11 @@
           const node = chatEl.children[i];
           if (node.dataset && node.dataset.role === role) {
             const spanText = node.querySelector('.content');
-            spanText.textContent += text;
-            chatEl.scrollTop = chatEl.scrollHeight;
-            return;
+            if (spanText) {
+              spanText.textContent += text;
+              chatEl.scrollTop = chatEl.scrollHeight;
+              return;
+            }
           }
         }
       }
@@ -185,7 +201,6 @@
       div.dataset.role = role;
       const label = document.createElement('span');
       label.className = 'role';
-      // use "Rijk" for user, "Nyx" for assistant
       label.textContent = role === 'user' ? 'Rijk:' : 'Nyx:';
       const content = document.createElement('span');
       content.className = 'content';
@@ -349,23 +364,46 @@
 
           log('[DC<=]', msg);
 
-          // Show live transcript of your speech as "Rijk:"
+          // Live transcript of your speech as "Rijk:"
           if (msg.type === 'input_text.delta') {
-            const delta = typeof msg.delta === 'string' ? msg.delta : '';
+            let delta = '';
+            if (typeof msg.delta === 'string') {
+              delta = msg.delta;
+            } else if (msg.delta && typeof msg.delta.text === 'string') {
+              delta = msg.delta.text;
+            }
             if (delta) {
               appendChat('user', delta, true);
             }
             return;
           }
 
-          if (msg.type === 'response.output_text.delta') {
+          // Assistant text output (flexible handler)
+          if (msg.type && msg.type.indexOf('response.output_text') === 0) {
             const id = msg.response_id || 'default';
-            const delta = typeof msg.delta === 'string' ? msg.delta : '';
-            if (!delta) return;
-            assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + delta;
-            // stream into last Nyx message
-            appendChat('assistant', delta, true);
+
+            let deltaText = '';
+            if (typeof msg.delta === 'string') {
+              deltaText = msg.delta;
+            } else if (msg.delta && typeof msg.delta.text === 'string') {
+              deltaText = msg.delta.text;
+            }
+
+            if (!deltaText) {
+              // some variants may use msg.output_text or msg.text
+              if (typeof msg.output_text === 'string') {
+                deltaText = msg.output_text;
+              } else if (msg.output_text && typeof msg.output_text.text === 'string') {
+                deltaText = msg.output_text.text;
+              }
+            }
+
+            if (!deltaText) return;
+
+            assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + deltaText;
+            appendChat('assistant', deltaText, true);
           }
+
           if ((msg.type === 'response.completed' || msg.type === 'response.done') && msg.response_id) {
             delete assistantTextBuffers[msg.response_id];
           }
