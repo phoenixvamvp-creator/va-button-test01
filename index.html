@@ -351,6 +351,7 @@
 
         // buffer of assistant text per response id
         const assistantTextBuffers = Object.create(null);
+        const assistantHadStreaming = Object.create(null);
 
         dc.onopen = () => {
           log('[DC] open');
@@ -378,7 +379,7 @@
             return;
           }
 
-          // Assistant text output (flexible handler)
+          // Assistant text output (streaming, if available)
           if (msg.type && msg.type.indexOf('response.output_text') === 0) {
             const id = msg.response_id || 'default';
 
@@ -390,7 +391,6 @@
             }
 
             if (!deltaText) {
-              // some variants may use msg.output_text or msg.text
               if (typeof msg.output_text === 'string') {
                 deltaText = msg.output_text;
               } else if (msg.output_text && typeof msg.output_text.text === 'string') {
@@ -400,12 +400,9 @@
 
             if (!deltaText) return;
 
+            assistantHadStreaming[id] = true;
             assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + deltaText;
             appendChat('assistant', deltaText, true);
-          }
-
-          if ((msg.type === 'response.completed' || msg.type === 'response.done') && msg.response_id) {
-            delete assistantTextBuffers[msg.response_id];
           }
 
           if (msg.type === 'response.created' && msg.response && msg.response.id) {
@@ -417,7 +414,11 @@
           }
 
           if (msg.type === 'response.done' && msg.response_id) {
-            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+            const id = msg.response_id;
+            delete assistantTextBuffers[id];
+            delete assistantHadStreaming[id];
+
+            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
@@ -425,8 +426,46 @@
               flushPendingToolResults();
             }
           }
+
           if (msg.type === 'response.completed' && msg.response_id) {
-            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+            const id = msg.response_id;
+
+            // Fallback: if there was no streaming text, try to extract final text
+            if (!assistantHadStreaming[id]) {
+              let fullText = assistantTextBuffers[id] || '';
+
+              if (!fullText) {
+                const resp = msg.response || msg;
+                const outputs = resp.output || resp.outputs || [];
+                if (Array.isArray(outputs)) {
+                  for (const o of outputs) {
+                    const contentArr = o.content || [];
+                    if (!Array.isArray(contentArr)) continue;
+                    for (const c of contentArr) {
+                      if (!c) continue;
+                      if (c.type === 'output_text' && c.output_text && typeof c.output_text.text === 'string') {
+                        fullText += c.output_text.text;
+                      } else if (typeof c.text === 'string') {
+                        fullText += c.text;
+                      } else if (c.output_text && Array.isArray(c.output_text)) {
+                        for (const ot of c.output_text) {
+                          if (typeof ot.text === 'string') fullText += ot.text;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (fullText) {
+                appendChat('assistant', fullText, false);
+              }
+            }
+
+            delete assistantTextBuffers[id];
+            delete assistantHadStreaming[id];
+
+            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
@@ -434,8 +473,13 @@
               flushPendingToolResults();
             }
           }
+
           if (msg.type === 'response.output_item.completed' && msg.response_id) {
-            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
+            const id = msg.response_id;
+            delete assistantTextBuffers[id];
+            delete assistantHadStreaming[id];
+
+            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
