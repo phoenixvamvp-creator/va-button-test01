@@ -185,7 +185,8 @@
       div.dataset.role = role;
       const label = document.createElement('span');
       label.className = 'role';
-      label.textContent = role === 'user' ? 'You:' : 'Nyx:';
+      // use "Rijk" for user, "Nyx" for assistant
+      label.textContent = role === 'user' ? 'Rijk:' : 'Nyx:';
       const content = document.createElement('span');
       content.className = 'content';
       content.textContent = text;
@@ -208,7 +209,7 @@
 
     const log = (...a) => {
       const s = a.map(x => typeof x === 'string' ? x : JSON.stringify(x, null, 2)).join(' ');
-      logEl.textContent += s + '\\n';
+      logEl.textContent += s + '\n';
       logEl.scrollTop = logEl.scrollHeight;
       console.log(...a);
     };
@@ -348,6 +349,15 @@
 
           log('[DC<=]', msg);
 
+          // Show live transcript of your speech as "Rijk:"
+          if (msg.type === 'input_text.delta') {
+            const delta = typeof msg.delta === 'string' ? msg.delta : '';
+            if (delta) {
+              appendChat('user', delta, true);
+            }
+            return;
+          }
+
           if (msg.type === 'response.output_text.delta') {
             const id = msg.response_id || 'default';
             const delta = typeof msg.delta === 'string' ? msg.delta : '';
@@ -410,7 +420,7 @@
                   silence_duration_ms: 1200,
                   idle_timeout_ms: 10000,
                   create_response: true,
-                  interrupt_response: false   // <<< changed from true
+                  interrupt_response: false
                 },
                 instructions:
                   'Always greet the user with the phrase "hello silly sausage" at the start of any new session unless the user specifically requests otherwise.' +
