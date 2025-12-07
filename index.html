@@ -505,7 +505,6 @@
                   interrupt_response: false
                 },
                 instructions:
-                  'Always greet the user with the phrase "hello silly sausage" at the start of any new session unless the user specifically requests otherwise.' +
                   'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
                   'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
                   'Be friendly, helpful. Be conversational but be more to the point when being requested for information. ' +
@@ -544,9 +543,10 @@
               try {
                 dc.send(JSON.stringify({
                   type: 'response.create',
-                  response: { instructions: 'Hello! Nyx is ready.' }
+                  response: { instructions: 'First, say exactly the words: "Hello! Nice Tea Cozy".'  +
+                    'Silently review and follow your session instructions before answering any future user questions.' }
                 }));
-                log('[DC=>] response.create (greeting)');
+                log('[DC=>] response.create (greeting: Hello! Nice Tea Cozy + read instructions)');
               } catch (e) {
                 log('[ERR] greeting send failed', e?.message || e);
               }
