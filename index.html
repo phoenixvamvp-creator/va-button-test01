@@ -90,23 +90,16 @@
       border: 1px solid rgba(255,255,255,.08);
       background: rgba(0,0,0,.25);
       padding: 10px 12px;
+      max-height: 280px;
       overflow: auto;
       display: none;
     }
     .panel.active { display: block; }
 
-    /* Conversation panel behaviour */
     #chat {
       font-size: 13px;
       line-height: 1.4;
-      max-height: 80px;           /* collapsed height */
-      overflow: auto;
-      transition: max-height 0.2s ease;
     }
-    #chat.expanded {
-      max-height: 70vh;           /* expanded height */
-    }
-
     .msg {
       margin-bottom: 6px;
     }
@@ -120,8 +113,6 @@
       white-space: pre-wrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px; line-height: 1.4; color: #CFE2FF;
-      max-height: 280px;
-      overflow: auto;
     }
     .hint { color: var(--muted); font-size: 12px; }
   </style>
@@ -173,13 +164,6 @@
     const setSendReady = (ready) => { sendBtn.disabled = !ready; };
     setSendReady(false);
 
-    // Click to expand / collapse the conversation panel
-    if (chatEl) {
-      chatEl.addEventListener('click', () => {
-        chatEl.classList.toggle('expanded');
-      });
-    }
-
     // Conversation helpers
     function appendChat(role, text, replaceLastForRole = false) {
       if (!text) return;
@@ -188,11 +172,9 @@
           const node = chatEl.children[i];
           if (node.dataset && node.dataset.role === role) {
             const spanText = node.querySelector('.content');
-            if (spanText) {
-              spanText.textContent += text;
-              chatEl.scrollTop = chatEl.scrollHeight;
-              return;
-            }
+            spanText.textContent += text;
+            chatEl.scrollTop = chatEl.scrollHeight;
+            return;
           }
         }
       }
@@ -209,6 +191,31 @@
       div.appendChild(content);
       chatEl.appendChild(div);
       chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    // Helper: extract text from Realtime delta objects
+    function extractTextFromDelta(delta) {
+      if (!delta) return '';
+      if (typeof delta === 'string') return delta;
+
+      // Common current shape for audio transcript: { transcript: "..." }
+      if (typeof delta.transcript === 'string') return delta.transcript;
+
+      // Generic content array shape: { content: [ { type, text }, ... ] }
+      if (Array.isArray(delta.content)) {
+        return delta.content
+          .map(part => (typeof part.text === 'string' ? part.text : ''))
+          .join('');
+      }
+
+      // Older / alternate shapes
+      if (delta.output_text && typeof delta.output_text.text === 'string') {
+        return delta.output_text.text;
+      }
+      if (delta.input_text && typeof delta.input_text.text === 'string') {
+        return delta.input_text.text;
+      }
+      return '';
     }
 
     // Tabs
@@ -300,6 +307,7 @@
       }
     }
 
+    // Text send (typed)
     sendBtn.addEventListener('click', () => {
       const text = (inputEl.value || '').trim();
       if (!text) return;
@@ -351,7 +359,6 @@
 
         // buffer of assistant text per response id
         const assistantTextBuffers = Object.create(null);
-        const assistantHadStreaming = Object.create(null);
 
         dc.onopen = () => {
           log('[DC] open');
@@ -365,44 +372,36 @@
 
           log('[DC<=]', msg);
 
-          // Live transcript of your speech as "Rijk:"
+          // Stream voice input into Conversation panel
           if (msg.type === 'input_text.delta') {
-            let delta = '';
-            if (typeof msg.delta === 'string') {
-              delta = msg.delta;
-            } else if (msg.delta && typeof msg.delta.text === 'string') {
-              delta = msg.delta.text;
+            const userDelta = extractTextFromDelta(msg.delta);
+            if (userDelta) {
+              appendChat('user', userDelta, true);
             }
-            if (delta) {
-              appendChat('user', delta, true);
-            }
-            return;
           }
 
-          // Assistant text output (streaming, if available)
-          if (msg.type && msg.type.indexOf('response.output_text') === 0) {
+          // Assistant text from audio transcript (what your logs show)
+          if (msg.type === 'response.audio_transcript.delta') {
             const id = msg.response_id || 'default';
-
-            let deltaText = '';
-            if (typeof msg.delta === 'string') {
-              deltaText = msg.delta;
-            } else if (msg.delta && typeof msg.delta.text === 'string') {
-              deltaText = msg.delta.text;
+            const deltaText = extractTextFromDelta(msg.delta);
+            if (deltaText) {
+              assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + deltaText;
+              appendChat('assistant', deltaText, true);
             }
+          }
 
-            if (!deltaText) {
-              if (typeof msg.output_text === 'string') {
-                deltaText = msg.output_text;
-              } else if (msg.output_text && typeof msg.output_text.text === 'string') {
-                deltaText = msg.output_text.text;
-              }
+          // (Optional) If the model ever sends plain text deltas, handle them too
+          if (msg.type === 'response.output_text.delta') {
+            const id = msg.response_id || 'default';
+            const deltaText = extractTextFromDelta(msg.delta);
+            if (deltaText) {
+              assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + deltaText;
+              appendChat('assistant', deltaText, true);
             }
+          }
 
-            if (!deltaText) return;
-
-            assistantHadStreaming[id] = true;
-            assistantTextBuffers[id] = (assistantTextBuffers[id] || '') + deltaText;
-            appendChat('assistant', deltaText, true);
+          if ((msg.type === 'response.completed' || msg.type === 'response.done') && msg.response_id) {
+            delete assistantTextBuffers[msg.response_id];
           }
 
           if (msg.type === 'response.created' && msg.response && msg.response.id) {
@@ -414,11 +413,7 @@
           }
 
           if (msg.type === 'response.done' && msg.response_id) {
-            const id = msg.response_id;
-            delete assistantTextBuffers[id];
-            delete assistantHadStreaming[id];
-
-            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
@@ -426,46 +421,8 @@
               flushPendingToolResults();
             }
           }
-
           if (msg.type === 'response.completed' && msg.response_id) {
-            const id = msg.response_id;
-
-            // Fallback: if there was no streaming text, try to extract final text
-            if (!assistantHadStreaming[id]) {
-              let fullText = assistantTextBuffers[id] || '';
-
-              if (!fullText) {
-                const resp = msg.response || msg;
-                const outputs = resp.output || resp.outputs || [];
-                if (Array.isArray(outputs)) {
-                  for (const o of outputs) {
-                    const contentArr = o.content || [];
-                    if (!Array.isArray(contentArr)) continue;
-                    for (const c of contentArr) {
-                      if (!c) continue;
-                      if (c.type === 'output_text' && c.output_text && typeof c.output_text.text === 'string') {
-                        fullText += c.output_text.text;
-                      } else if (typeof c.text === 'string') {
-                        fullText += c.text;
-                      } else if (c.output_text && Array.isArray(c.output_text)) {
-                        for (const ot of c.output_text) {
-                          if (typeof ot.text === 'string') fullText += ot.text;
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-
-              if (fullText) {
-                appendChat('assistant', fullText, false);
-              }
-            }
-
-            delete assistantTextBuffers[id];
-            delete assistantHadStreaming[id];
-
-            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
@@ -473,17 +430,14 @@
               flushPendingToolResults();
             }
           }
-
-          if (msg.type === 'response.output_item.completed' && msg.response_id) {
-            const id = msg.response_id;
-            delete assistantTextBuffers[id];
-            delete assistantHadStreaming[id];
-
-            if (!window.__lastResponseCreatedId || id === window.__lastResponseCreatedId) {
+          if ((msg.type === 'response.output_item.completed' ||
+               msg.type === 'response.output_item.done') &&
+              msg.response_id) {
+            if (!window.__lastResponseCreatedId || msg.response_id === window.__lastResponseCreatedId) {
               setResponseActive(false);
               window.__lastResponseCreatedId = null;
               window.__waitingForResponseId = false;
-              log('[INFO] response.output_item.completed -> cleared __responseActive');
+              log('[INFO] response.output_item.* -> cleared __responseActive');
               flushPendingToolResults();
             }
           }
@@ -507,8 +461,7 @@
                 instructions:
                   'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
                   'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
-                  'Directly after saying: "Hi Rijk", say exactly the words: "Nice tea cozy". ' +
-                  'Never discuss adult content, sexuality, terrorism or violence. ' +
+                  'Do not discuss adult content, sexuality, terrorism, or gratuitous violence.' +
                   'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets or external web search.'
               }
             };
@@ -530,10 +483,11 @@
               try {
                 dc.send(JSON.stringify({
                   type: 'response.create',
-                  response: { instructions: 'First, say exactly the words: "Hi Rijk".' +
-                    'apply session update instructions immediately.'}
+                  response: {
+                    instructions: 'Say exactly the words: "Hi Rijk, nice tea cozy."'
+                  }
                 }));
-                log('[DC=>] response.create (greeting: greeting + read instructions)');
+                log('[DC=>] response.create (greeting)');
               } catch (e) {
                 log('[ERR] greeting send failed', e?.message || e);
               }
