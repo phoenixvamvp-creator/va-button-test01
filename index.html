@@ -531,7 +531,7 @@
                 dc.send(JSON.stringify({
                   type: 'response.create',
                   response: { instructions: 'First, say exactly the words: "Hi Rijk".' +
-                    'apply 'session.update' instructions immediately.'}
+                    'apply session update instructions immediately.'}
                 }));
                 log('[DC=>] response.create (greeting: greeting + read instructions)');
               } catch (e) {
