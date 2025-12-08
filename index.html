@@ -198,7 +198,7 @@
       if (!delta) return '';
       if (typeof delta === 'string') return delta;
 
-      // Common current shape for audio transcript: { transcript: "..." }
+      // For audio transcript events: { transcript: "..." }
       if (typeof delta.transcript === 'string') return delta.transcript;
 
       // Generic content array shape: { content: [ { type, text }, ... ] }
@@ -208,7 +208,6 @@
           .join('');
       }
 
-      // Older / alternate shapes
       if (delta.output_text && typeof delta.output_text.text === 'string') {
         return delta.output_text.text;
       }
@@ -372,15 +371,16 @@
 
           log('[DC<=]', msg);
 
-          // Stream voice input into Conversation panel
-          if (msg.type === 'input_text.delta') {
-            const userDelta = extractTextFromDelta(msg.delta);
+          // Stream your speech/text into Conversation panel
+          // Matches e.g. "input_text.delta", "input.*.delta"
+          if (msg.type && msg.type.startsWith('input') && msg.type.endsWith('.delta')) {
+            const userDelta = extractTextFromDelta(msg.delta || msg.input || msg);
             if (userDelta) {
               appendChat('user', userDelta, true);
             }
           }
 
-          // Assistant text from audio transcript (what your logs show)
+          // Assistant text from audio transcript
           if (msg.type === 'response.audio_transcript.delta') {
             const id = msg.response_id || 'default';
             const deltaText = extractTextFromDelta(msg.delta);
@@ -390,7 +390,7 @@
             }
           }
 
-          // (Optional) If the model ever sends plain text deltas, handle them too
+          // Assistant text deltas (if the model ever sends them)
           if (msg.type === 'response.output_text.delta') {
             const id = msg.response_id || 'default';
             const deltaText = extractTextFromDelta(msg.delta);
