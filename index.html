@@ -371,12 +371,24 @@
 
           log('[DC<=]', msg);
 
-          // Stream your speech/text into Conversation panel
-          // Matches e.g. "input_text.delta", "input.*.delta"
-          if (msg.type && msg.type.startsWith('input') && msg.type.endsWith('.delta')) {
-            const userDelta = extractTextFromDelta(msg.delta || msg.input || msg);
-            if (userDelta) {
-              appendChat('user', userDelta, true);
+          // USER: realtime voice transcript (your side)
+          // conversation.item.input_audio_transcription.delta => partial text
+          // conversation.item.input_audio_transcription.completed => final text
+          if (msg.type === 'conversation.item.input_audio_transcription.delta') {
+            const deltaText =
+              typeof msg.delta === 'string'
+                ? msg.delta
+                : extractTextFromDelta(msg);
+
+            if (deltaText) {
+              appendChat('user', deltaText, true);
+            }
+          }
+
+          if (msg.type === 'conversation.item.input_audio_transcription.completed') {
+            const full = msg.transcript || '';
+            if (full && chatEl.children.length === 0) {
+              appendChat('user', full, false);
             }
           }
 
@@ -528,7 +540,8 @@
                       pageSize: args.pageSize || 25
                     };
                   } else if (name === 'sheets_read') {
-                    url = '/api/workspace.js?action=sheets.read';
+                    url = '/api/workspace.js?action=sh
+eets.read';
                     body = {
                       fileName: (args.fileName || '').toString(),
                       folderName: (args.folderName || '').toString(),
