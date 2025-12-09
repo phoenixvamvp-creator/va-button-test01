@@ -555,7 +555,7 @@ async function actDriveListRoot(req, res, tokens) {
     
     return json(res, 400, {
       error: 'Unknown or missing action.',
-      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell']
+      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell','drive.listroot','gmail.list','calendar.list']
     });
   } catch (e) {
     if (e?.status && e?.body) return json(res, e.status, e.body);
