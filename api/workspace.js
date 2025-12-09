@@ -100,6 +100,32 @@ async function resolveFileByName(tokens, req, res, args) {
   return files[0];
 }
 
+// ---- Gmail helpers (read-only)
+async function gmailSimple(accessToken, url) {
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data };
+}
+
+// ---- Calendar helpers (read-only)
+async function calendarList(accessToken, timeMin, timeMax, maxResults) {
+  const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+  url.searchParams.set('timeMin', timeMin);
+  url.searchParams.set('timeMax', timeMax);
+  url.searchParams.set('singleEvents', 'true');
+  url.searchParams.set('orderBy', 'startTime');
+  url.searchParams.set('maxResults', String(maxResults));
+
+  const r = await fetch(url.href, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data };
+}
+
+
 // ---- Sheets helpers
 async function sheetsRead(accessToken, spreadsheetId, range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
@@ -348,6 +374,107 @@ async function actSheetsUpdateCell(req, res, tokens) {
   return json(res, 200, { ok: true, file, updatedRange: r.data.updatedRange || range });
 }
 
+async function actGmailList(req, res, tokens) {
+  const b = parseBody(req);
+  const label = (b.label || 'INBOX').toString().trim();   // default: INBOX
+  const query = (b.query || '').toString().trim();
+  const maxResults = Math.max(1, Math.min(Number(b.maxResults || 10), 20));
+
+  // List messages
+  const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
+  if (label) listUrl.searchParams.set('labelIds', label);
+  if (query) listUrl.searchParams.set('q', query);
+  listUrl.searchParams.set('maxResults', String(maxResults));
+
+  const listOut = await withRefresh(tokens, res, req, t => gmailSimple(t, listUrl.href));
+  if (!listOut.ok) {
+    return json(res, listOut.status, { error: 'Gmail list failed', details: listOut.data });
+  }
+
+  const effectiveTokens = listOut.tokens || tokens;
+  const accessToken = effectiveTokens.access_token;
+  const msgs = (listOut.data.messages || []).slice(0, maxResults);
+
+  const results = [];
+  for (const m of msgs) {
+    try {
+      const msgUrl =
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}`
+        + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date';
+      const detailOut = await gmailSimple(accessToken, msgUrl);
+      if (!detailOut.ok) continue;
+
+      const meta = detailOut.data;
+      const headers = (meta.payload && meta.payload.headers) || [];
+      const getH = (name) => {
+        const h = headers.find(h => h.name === name);
+        return h ? h.value : '';
+      };
+
+      results.push({
+        id: meta.id,
+        threadId: meta.threadId,
+        from: getH('From'),
+        subject: getH('Subject'),
+        date: getH('Date'),
+        snippet: meta.snippet || ''
+      });
+    } catch {
+      // ignore individual failures, keep others
+    }
+  }
+
+  return json(res, 200, {
+    ok: true,
+    label,
+    query,
+    count: results.length,
+    messages: results
+  });
+}
+
+async function actCalendarList(req, res, tokens) {
+  const b = parseBody(req);
+  const maxResults = Math.max(1, Math.min(Number(b.maxResults || 10), 20));
+
+  let timeMin = (b.timeMin || '').toString().trim();
+  let timeMax = (b.timeMax || '').toString().trim();
+
+  if (!timeMin) {
+    timeMin = new Date().toISOString();
+  }
+  if (!timeMax) {
+    const d = new Date();
+    d.setDate(d.getDate() + 7); // default: next 7 days
+    timeMax = d.toISOString();
+  }
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarList(t, timeMin, timeMax, maxResults)
+  );
+  if (!out.ok) {
+    return json(res, out.status, { error: 'Calendar list failed', details: out.data });
+  }
+
+  const events = (out.data.items || []).map(ev => ({
+    id: ev.id,
+    summary: ev.summary || '',
+    start: ev.start?.dateTime || ev.start?.date || null,
+    end: ev.end?.dateTime || ev.end?.date || null,
+    location: ev.location || '',
+    status: ev.status || ''
+  }));
+
+  return json(res, 200, {
+    ok: true,
+    timeMin,
+    timeMax,
+    count: events.length,
+    events
+  });
+}
+
+
 // --- Web Search using SerpAPI ---
 async function actWebSearch(req, res /*, tokens */) {
   const b = parseBody(req);
@@ -421,6 +548,8 @@ async function actDriveListRoot(req, res, tokens) {
     if (action === 'sheets.appendrow')  return await actSheetsAppendRow(req, res, tokens);
     if (action === 'sheets.updatecell') return await actSheetsUpdateCell(req, res, tokens);
     if (action === 'drive.listroot')   return await actDriveListRoot(req, res, tokens);
+    if (action === 'gmail.list')        return await actGmailList(req, res, tokens);     
+    if (action === 'calendar.list')     return await actCalendarList(req, res, tokens); 
     if (action === 'web.search') return await actWebSearch(req, res, tokens);
 
     
