@@ -100,30 +100,88 @@ async function resolveFileByName(tokens, req, res, args) {
   return files[0];
 }
 
-// ---- Gmail helpers (read-only)
-async function gmailSimple(accessToken, url) {
-  const r = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` }
+// ---- Gmail helpers
+async function gmailList(accessToken, { label, maxResults }) {
+  const base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+  const listUrl = new URL(`${base}/messages`);
+  if (label) listUrl.searchParams.set('labelIds', label);
+  listUrl.searchParams.set('maxResults', String(maxResults || 10));
+
+  const listResp = await fetch(listUrl.href, {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-  const data = await r.json();
-  return { ok: r.ok, status: r.status, data };
+  const listData = await listResp.json();
+  if (!listResp.ok) {
+    return { ok: false, status: listResp.status, data: listData };
+  }
+
+  const messages = listData.messages || [];
+  const results = [];
+
+  for (const m of messages) {
+    const getUrl = new URL(`${base}/messages/${encodeURIComponent(m.id)}`);
+    getUrl.searchParams.set('format', 'metadata');
+    getUrl.searchParams.set('metadataHeaders', 'From');
+    getUrl.searchParams.append('metadataHeaders', 'Subject');
+    getUrl.searchParams.append('metadataHeaders', 'Date');
+
+    const msgResp = await fetch(getUrl.href, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const msgData = await msgResp.json();
+    if (!msgResp.ok) continue;
+
+    const headers = {};
+    for (const h of msgData.payload?.headers || []) {
+      headers[h.name.toLowerCase()] = h.value;
+    }
+
+    results.push({
+      id: msgData.id,
+      threadId: msgData.threadId,
+      from: headers['from'] || '',
+      subject: headers['subject'] || '',
+      date: headers['date'] || '',
+      snippet: msgData.snippet || '',
+    });
+  }
+
+  return { ok: true, status: 200, data: { messages: results } };
 }
 
-// ---- Calendar helpers (read-only)
-async function calendarList(accessToken, timeMin, timeMax, maxResults) {
+// ---- Calendar helpers
+async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
+  const now = new Date();
+  const defaultTimeMin = now.toISOString();
+  const defaultTimeMax = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
   const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
-  url.searchParams.set('timeMin', timeMin);
-  url.searchParams.set('timeMax', timeMax);
   url.searchParams.set('singleEvents', 'true');
   url.searchParams.set('orderBy', 'startTime');
-  url.searchParams.set('maxResults', String(maxResults));
+  url.searchParams.set('maxResults', String(maxResults || 10));
+  url.searchParams.set('timeMin', timeMin || defaultTimeMin);
+  url.searchParams.set('timeMax', timeMax || defaultTimeMax);
 
   const r = await fetch(url.href, {
-    headers: { Authorization: `Bearer ${accessToken}` }
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   const data = await r.json();
-  return { ok: r.ok, status: r.status, data };
+  if (!r.ok) {
+    return { ok: false, status: r.status, data };
+  }
+
+  const events = (data.items || []).map(ev => ({
+    id: ev.id,
+    summary: ev.summary || '',
+    start: ev.start?.dateTime || ev.start?.date || null,
+    end: ev.end?.dateTime || ev.end?.date || null,
+    location: ev.location || '',
+    status: ev.status || '',
+  }));
+
+  return { ok: true, status: 200, data: { events } };
 }
+
 
 
 // ---- Sheets helpers
@@ -474,6 +532,44 @@ async function actCalendarList(req, res, tokens) {
   });
 }
 
+async function actGmailList(req, res, tokens) {
+  const b = parseBody(req);
+  const label = (b.label || '').toString().trim();        // e.g. 'INBOX'
+  const maxResults = Number(b.maxResults || 5);
+
+  const out = await withRefresh(tokens, res, req, t =>
+    gmailList(t, { label: label || undefined, maxResults })
+  );
+  if (!out.ok) return json(res, out.status, { error: 'Gmail list failed', details: out.data });
+
+  const messages = out.data.messages || [];
+  return json(res, 200, {
+    ok: true,
+    label: label || 'INBOX',
+    count: messages.length,
+    messages,
+  });
+}
+
+async function actCalendarList(req, res, tokens) {
+  const b = parseBody(req);
+  const maxResults = Number(b.maxResults || 10);
+  const timeMin = (b.timeMin || '').toString().trim();
+  const timeMax = (b.timeMax || '').toString().trim();
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarList(t, { maxResults, timeMin: timeMin || undefined, timeMax: timeMax || undefined })
+  );
+  if (!out.ok) return json(res, out.status, { error: 'Calendar list failed', details: out.data });
+
+  const events = out.data.events || [];
+  return json(res, 200, {
+    ok: true,
+    count: events.length,
+    events,
+  });
+}
+
 
 // --- Web Search using SerpAPI ---
 async function actWebSearch(req, res /*, tokens */) {
@@ -555,7 +651,7 @@ async function actDriveListRoot(req, res, tokens) {
     
     return json(res, 400, {
       error: 'Unknown or missing action.',
-      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell','drive.listroot','gmail.list','calendar.list']
+      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell','drive.listroot','gmail.list','calendar.list','web.search']
     });
   } catch (e) {
     if (e?.status && e?.body) return json(res, e.status, e.body);
