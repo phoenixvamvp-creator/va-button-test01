@@ -464,7 +464,7 @@
                   'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
                   'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
                   'Do not discuss adult content, sexuality, terrorism, or gratuitous violence.' +
-                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets or external web search.'
+                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets, Gmail, Calendar, or external web search. Use gmail_read when Rijk asks about his email, and calendar_read when he asks about his schedule or upcoming events.'
               }
             };
             try {
@@ -566,20 +566,22 @@
                   } else if (name === 'drive_listroot') {
                     url = '/api/workspace.js?action=drive.listroot';
                     body = {};
-                  } else if (name === 'gmail_read') {
+                    
+                      } else if (name === 'gmail_read') {
                     url = '/api/workspace.js?action=gmail.list';
                     body = {
-                      label: (args.label || '').toString(),
-                      query: (args.query || '').toString(),
-                      maxResults: args.maxResults || 10
+                      label: (args.label || 'INBOX').toString(),
+                      maxResults: args.maxResults || 5
                     };
                   } else if (name === 'calendar_read') {
                     url = '/api/workspace.js?action=calendar.list';
                     body = {
+                      maxResults: args.maxResults || 10,
                       timeMin: (args.timeMin || '').toString(),
-                      timeMax: (args.timeMax || '').toString(),
-                      maxResults: args.maxResults || 10
+                      timeMax: (args.timeMax || '').toString()
                     };
+
+                    
                   } else {
                     const out = { error: `Unsupported tool: ${name}` };
 
@@ -726,26 +728,29 @@
                       }
                     },
                     {
-                      type: 'function',
-                      name: 'gmail_read',
-                      description: 'Read recent Gmail messages (read-only, subjects/senders/dates/snippets).',
+                     type: 'function',
+                      name: 'web_search',
+                      description: 'Perform a web search via SerpAPI and return summarized results.',
                       parameters: {
                         type: 'object',
                         properties: {
-                          label: {
-                            type: 'string',
-                            description: 'Optional Gmail label, e.g. INBOX, UNREAD, STARRED'
-                          },
-                          query: {
-                            type: 'string',
-                            description: 'Optional Gmail search query, e.g. "from:andre subject:invoice"'
-                          },
-                          maxResults: {
-                            type: 'integer',
-                            minimum: 1,
-                            maximum: 20,
-                            description: 'Number of messages to fetch (default 10)'
-                          }
+                          query: { type: 'string', description: 'Search query' },
+                          num: { type: 'integer', description: 'Number of results (1-10)', minimum: 1, maximum: 10 },
+                          site: { type: 'string', description: 'Optional site: filter, e.g. example.com' },
+                          freshnessDays: { type: 'integer', description: 'Optional freshness limit in days', minimum: 0, maximum: 365 }
+                        },
+                        required: ['query']
+                      }
+                    },
+                    {
+                      type: 'function',
+                      name: 'gmail_read',
+                      description: 'Read recent Gmail messages (readonly).',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          label: { type: 'string', description: 'Gmail label ID or name; default INBOX' },
+                          maxResults: { type: 'integer', description: 'Max messages to fetch (1–20)', minimum: 1, maximum: 20 }
                         },
                         required: []
                       }
@@ -753,28 +758,18 @@
                     {
                       type: 'function',
                       name: 'calendar_read',
-                      description: 'Read upcoming events from the primary Google Calendar (read-only).',
+                      description: 'Read upcoming events from the primary Google Calendar (readonly).',
                       parameters: {
                         type: 'object',
                         properties: {
-                          timeMin: {
-                            type: 'string',
-                            description: 'ISO8601/RFC3339 start time; defaults to now if omitted'
-                          },
-                          timeMax: {
-                            type: 'string',
-                            description: 'ISO8601/RFC3339 end time; defaults to 7 days from now'
-                          },
-                          maxResults: {
-                            type: 'integer',
-                            minimum: 1,
-                            maximum: 20,
-                            description: 'Number of events to fetch (default 10)'
-                          }
+                          maxResults: { type: 'integer', description: 'Max events to fetch (1–20)', minimum: 1, maximum: 20 },
+                          timeMin: { type: 'string', description: 'Optional ISO timeMin; default now' },
+                          timeMax: { type: 'string', description: 'Optional ISO timeMax; default ~7 days from now' }
                         },
                         required: []
                       }
                     }
+
 
                     
                   ]
