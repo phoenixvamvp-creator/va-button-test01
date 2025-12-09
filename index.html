@@ -616,7 +616,7 @@
 
                   const text = await r.text();
                   log('[TOOL]', name, r.status, text.slice(0, 400));
-                  await sendResponseInstructions(text);
+                  await sendResponseInstructions(text, name);
                 } catch (e) {
                   const out = { error: String(e?.message || e) };
                   await sendResponseInstructions(JSON.stringify(out));
