@@ -744,21 +744,7 @@
                         required: ['query']
                       }
                     },
-                    {
-                     type: 'function',
-                      name: 'web_search',
-                      description: 'Perform a web search via SerpAPI and return summarized results.',
-                      parameters: {
-                        type: 'object',
-                        properties: {
-                          query: { type: 'string', description: 'Search query' },
-                          num: { type: 'integer', description: 'Number of results (1-10)', minimum: 1, maximum: 10 },
-                          site: { type: 'string', description: 'Optional site: filter, e.g. example.com' },
-                          freshnessDays: { type: 'integer', description: 'Optional freshness limit in days', minimum: 0, maximum: 365 }
-                        },
-                        required: ['query']
-                      }
-                    },
+                    
                     {
                       type: 'function',
                       name: 'gmail_read',
