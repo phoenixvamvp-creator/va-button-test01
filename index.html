@@ -710,7 +710,7 @@
                         required: ['fileName','cell']
                       }
                     },
-                    {
+                                        {
                       type: 'function',
                       name: 'web_search',
                       description: 'Perform a web search via SerpAPI and return summarized results.',
@@ -724,7 +724,59 @@
                         },
                         required: ['query']
                       }
+                    },
+                    {
+                      type: 'function',
+                      name: 'gmail_read',
+                      description: 'Read recent Gmail messages (read-only, subjects/senders/dates/snippets).',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          label: {
+                            type: 'string',
+                            description: 'Optional Gmail label, e.g. INBOX, UNREAD, STARRED'
+                          },
+                          query: {
+                            type: 'string',
+                            description: 'Optional Gmail search query, e.g. "from:andre subject:invoice"'
+                          },
+                          maxResults: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 20,
+                            description: 'Number of messages to fetch (default 10)'
+                          }
+                        },
+                        required: []
+                      }
+                    },
+                    {
+                      type: 'function',
+                      name: 'calendar_read',
+                      description: 'Read upcoming events from the primary Google Calendar (read-only).',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          timeMin: {
+                            type: 'string',
+                            description: 'ISO8601/RFC3339 start time; defaults to now if omitted'
+                          },
+                          timeMax: {
+                            type: 'string',
+                            description: 'ISO8601/RFC3339 end time; defaults to 7 days from now'
+                          },
+                          maxResults: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 20,
+                            description: 'Number of events to fetch (default 10)'
+                          }
+                        },
+                        required: []
+                      }
                     }
+
+                    
                   ]
                 }
               };
