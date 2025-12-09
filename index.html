@@ -554,7 +554,8 @@
                       cell: (args.cell || '').toString(),
                       value: args.value
                     };
-                  } else if (name === 'web_search') {
+                    
+                                    } else if (name === 'web_search') {
                     url = '/api/workspace.js?action=web.search';
                     body = {
                       query: (args.query || '').toString(),
@@ -565,8 +566,24 @@
                   } else if (name === 'drive_listroot') {
                     url = '/api/workspace.js?action=drive.listroot';
                     body = {};
+                  } else if (name === 'gmail_read') {
+                    url = '/api/workspace.js?action=gmail.list';
+                    body = {
+                      label: (args.label || '').toString(),
+                      query: (args.query || '').toString(),
+                      maxResults: args.maxResults || 10
+                    };
+                  } else if (name === 'calendar_read') {
+                    url = '/api/workspace.js?action=calendar.list';
+                    body = {
+                      timeMin: (args.timeMin || '').toString(),
+                      timeMax: (args.timeMax || '').toString(),
+                      maxResults: args.maxResults || 10
+                    };
                   } else {
                     const out = { error: `Unsupported tool: ${name}` };
+
+                    
                     await sendResponseInstructions(JSON.stringify(out));
                     return;
                   }
