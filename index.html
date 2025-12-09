@@ -265,30 +265,42 @@
       }
     }
 
-    async function sendResponseInstructions(text) {
-      if (!dc || dc.readyState !== 'open') {
-        log('[WARN] DC not open; cannot send response.create');
-        return;
-      }
-      if (window.__responseActive) {
-        window.__pendingToolResults.push({ text });
-        log('[INFO] response active — queued tool result');
-        return;
-      }
-      try {
-        window.__waitingForResponseId = true;
-        setResponseActive(true);
-        dc.send(JSON.stringify({
-          type: 'response.create',
-          response: { instructions: text }
-        }));
-        log('[DC=>] response.create (tool output sent)');
-      } catch (e) {
-        log('[ERR] sendResponseInstructions send failed:', e?.message || e);
-        setResponseActive(false);
-        window.__waitingForResponseId = false;
-      }
-    }
+    async function sendResponseInstructions(text, sourceHint) {
+  if (!dc || dc.readyState !== 'open') {
+    log('[WARN] DC not open; cannot send response.create');
+    return;
+  }
+
+  const payloadText = sourceHint
+    ? (
+        'You just received JSON data from the tool "' + sourceHint + '". ' +
+        'Use ONLY this data and the conversation so far to answer Rijk. ' +
+        'If it looks like an error, or if there is missing information, say that clearly and DO NOT guess or invent any details. ' +
+        'Here is the JSON:\n' + text
+      )
+    : text;
+
+  if (window.__responseActive) {
+    window.__pendingToolResults.push({ text: payloadText });
+    log('[INFO] response active — queued tool result');
+    return;
+  }
+
+  try {
+    window.__waitingForResponseId = true;
+    setResponseActive(true);
+    dc.send(JSON.stringify({
+      type: 'response.create',
+      response: { instructions: payloadText }
+    }));
+    log('[DC=>] response.create (tool output sent; source=' + (sourceHint || 'unknown') + ')');
+  } catch (e) {
+    log('[ERR] sendResponseInstructions send failed:', e?.message || e);
+    setResponseActive(false);
+    window.__waitingForResponseId = false;
+  }
+}
+
 
     function flushPendingToolResults() {
       if (!dc || dc.readyState !== 'open') {
@@ -461,10 +473,15 @@
                   interrupt_response: false
                 },
                 instructions:
-                  'Your name is Nyx. Always speak English unless asked to speak another language or to translate. Be concise, factual, and avoid flattery.' +
-                  'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice first interaction.' +
-                  'Do not discuss adult content, sexuality, terrorism, or gratuitous violence.' +
-                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets, Gmail, Calendar, or external web search. Use gmail_read when Rijk asks about his email, and calendar_read when he asks about his schedule or upcoming events.'
+                  'Your name is Nyx. Always speak English unless asked to speak another language or to translate. ' +
+                  'You must never invent facts or events. If you are not sure, you must say you are not sure. ' +
+                  'When Rijk asks about his email, calendar, or Google files, you MUST call the appropriate tool first and base your answer only on that tool result and what Rijk has told you in this conversation. ' +
+                  'If a tool returns an error or no data, you must explain that honestly and NOT guess or fill in missing details. ' +
+                  'It is always better to say “I don’t know” or “I cannot access that” than to give a wrong answer. ' +
+                  'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice-first interaction. ' +
+                  'Do not discuss adult content, sexuality, terrorism, or gratuitous violence. ' +
+                  'Be concise, factual, and avoid flattery.' +
+                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets/Gmail/Calendar, or external web search. Use gmail_read when Rijk asks about his email, and calendar_read when he asks about his schedule or upcoming events.'
               }
             };
             try {
