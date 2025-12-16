@@ -1,4 +1,6 @@
 // api/workspace.js — Drive + Sheets + Docs actions
+// FIX: CommonJS export (Vercel/Node is loading this as CJS, so `export default` crashes)
+
 function json(res, status, body) {
   res.status(status).setHeader('Content-Type', 'application/json');
   res.send(JSON.stringify(body));
@@ -182,8 +184,6 @@ async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
   return { ok: true, status: 200, data: { events } };
 }
 
-
-
 // ---- Sheets helpers
 async function sheetsRead(accessToken, spreadsheetId, range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
@@ -230,7 +230,6 @@ function extractPlainTextFromDoc(doc) {
     }
     return parts.join('\n');
   } catch {}
-  // fallback simple stringify
   return JSON.stringify(doc);
 }
 async function docsBatchUpdate(accessToken, docId, requests) {
@@ -291,82 +290,76 @@ async function actDriveSearch(req, res, tokens) {
 async function actDocsRead(req, res, tokens) {
   const b = parseBody(req);
   const docId = (b.docId || '').toString().trim();
-const docName = (b.docName || '').toString().trim();
-const folderName = (b.folderName || '').toString().trim();
-if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
+  const docName = (b.docName || '').toString().trim();
+  const folderName = (b.folderName || '').toString().trim();
+  if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
 
   let file = null;
-let targetId = docId;
+  let targetId = docId;
 
-if (!targetId) {
-  const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  const f = await resolveFileByName(tokens, req, res, {
-    name: docName, mimeType: 'application/vnd.google-apps.document', folderId
-  });
-  if (!f) return json(res, 404, { error: `No document found for '${docName}'.` });
-  file = f;
-  targetId = f.id;
-} else {
-  file = { id: targetId, name: docName || undefined };
-}
+  if (!targetId) {
+    const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
+    const f = await resolveFileByName(tokens, req, res, {
+      name: docName, mimeType: 'application/vnd.google-apps.document', folderId
+    });
+    if (!f) return json(res, 404, { error: `No document found for '${docName}'.` });
+    file = f;
+    targetId = f.id;
+  } else {
+    file = { id: targetId, name: docName || undefined };
+  }
 
-const r = await withRefresh(tokens, res, req, t => docsGet(t, targetId));
-if (!r.ok) return json(res, r.status, { error: 'Docs read failed', details: r.data });
+  const r = await withRefresh(tokens, res, req, t => docsGet(t, targetId));
+  if (!r.ok) return json(res, r.status, { error: 'Docs read failed', details: r.data });
 
-const text = extractPlainTextFromDoc(r.data);
-return json(res, 200, { ok: true, file, text, wordCount: text.length });
-
+  const text = extractPlainTextFromDoc(r.data);
+  return json(res, 200, { ok: true, file, text, wordCount: text.length });
 }
 
 async function actDocsCreateAppend(req, res, tokens) {
   const b = parseBody(req);
   const docId = (b.docId || '').toString().trim();
-const docName = (b.docName || '').toString().trim();
-const folderName = (b.folderName || '').toString().trim();
-const mode = ((b.mode || 'append') + '').toLowerCase();
-const text = (b.text || '').toString();
+  const docName = (b.docName || '').toString().trim();
+  const folderName = (b.folderName || '').toString().trim();
+  const mode = ((b.mode || 'append') + '').toLowerCase();
+  const text = (b.text || '').toString();
 
-if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
-if (!text) return json(res, 400, { error: 'text is required' });
-if (mode !== 'append' && mode !== 'replace') return json(res, 400, { error: 'invalid mode; use append or replace' });
-
+  if (!docId && !docName) return json(res, 400, { error: 'docId or docName is required' });
+  if (!text) return json(res, 400, { error: 'text is required' });
+  if (mode !== 'append' && mode !== 'replace') return json(res, 400, { error: 'invalid mode; use append or replace' });
 
   let file;
 
-if (docId) {
-  // Use the provided ID directly
-  file = { id: docId, name: docName || undefined };
-} else {
-  // Find by name (optionally inside folder), or create if missing
-  const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
-  file = await resolveFileByName(tokens, req, res, {
-    name: docName, mimeType: 'application/vnd.google-apps.document', folderId
-  });
+  if (docId) {
+    file = { id: docId, name: docName || undefined };
+  } else {
+    const folderId = await resolveFolderId(tokens, req, res, folderName || undefined);
+    file = await resolveFileByName(tokens, req, res, {
+      name: docName, mimeType: 'application/vnd.google-apps.document', folderId
+    });
 
-  if (!file) {
-    const created = await withRefresh(tokens, res, req, t => driveCreateDoc(t, docName, folderId));
-    if (!created.ok) return json(res, created.status, { error: 'Doc create failed', details: created.data });
-    file = { id: created.data.id, name: docName };
+    if (!file) {
+      const created = await withRefresh(tokens, res, req, t => driveCreateDoc(t, docName, folderId));
+      if (!created.ok) return json(res, created.status, { error: 'Doc create failed', details: created.data });
+      file = { id: created.data.id, name: docName };
+    }
   }
-}
-
 
   let requests;
-if (mode === 'replace') {
-  requests = [
-    { deleteContentRange: { range: { segmentId: null, startIndex: 1, endIndex: -1 } } },
-    { insertText: { location: { index: 1 }, text } }
-  ];
-} else {
-  requests = [
-    { insertText: { endOfSegmentLocation: {}, text: text.endsWith('\n') ? text : text + '\n' } }
-  ];
-}
+  if (mode === 'replace') {
+    requests = [
+      { deleteContentRange: { range: { segmentId: null, startIndex: 1, endIndex: -1 } } },
+      { insertText: { location: { index: 1 }, text } }
+    ];
+  } else {
+    requests = [
+      { insertText: { endOfSegmentLocation: {}, text: text.endsWith('\n') ? text : text + '\n' } }
+    ];
+  }
 
-const writeResp = await withRefresh(tokens, res, req, t => docsBatchUpdate(t, file.id, requests));
-if (!writeResp.ok) return json(res, writeResp.status, { error: 'Doc write failed', details: writeResp.data });
-return json(res, 200, { ok: true, doc: file, mode });
-
+  const writeResp = await withRefresh(tokens, res, req, t => docsBatchUpdate(t, file.id, requests));
+  if (!writeResp.ok) return json(res, writeResp.status, { error: 'Doc write failed', details: writeResp.data });
+  return json(res, 200, { ok: true, doc: file, mode });
 }
 
 async function actSheetsRead(req, res, tokens) {
@@ -434,107 +427,7 @@ async function actSheetsUpdateCell(req, res, tokens) {
 
 async function actGmailList(req, res, tokens) {
   const b = parseBody(req);
-  const label = (b.label || 'INBOX').toString().trim();   // default: INBOX
-  const query = (b.query || '').toString().trim();
-  const maxResults = Math.max(1, Math.min(Number(b.maxResults || 10), 20));
-
-  // List messages
-  const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-  if (label) listUrl.searchParams.set('labelIds', label);
-  if (query) listUrl.searchParams.set('q', query);
-  listUrl.searchParams.set('maxResults', String(maxResults));
-
-  const listOut = await withRefresh(tokens, res, req, t => gmailSimple(t, listUrl.href));
-  if (!listOut.ok) {
-    return json(res, listOut.status, { error: 'Gmail list failed', details: listOut.data });
-  }
-
-  const effectiveTokens = listOut.tokens || tokens;
-  const accessToken = effectiveTokens.access_token;
-  const msgs = (listOut.data.messages || []).slice(0, maxResults);
-
-  const results = [];
-  for (const m of msgs) {
-    try {
-      const msgUrl =
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(m.id)}`
-        + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date';
-      const detailOut = await gmailSimple(accessToken, msgUrl);
-      if (!detailOut.ok) continue;
-
-      const meta = detailOut.data;
-      const headers = (meta.payload && meta.payload.headers) || [];
-      const getH = (name) => {
-        const h = headers.find(h => h.name === name);
-        return h ? h.value : '';
-      };
-
-      results.push({
-        id: meta.id,
-        threadId: meta.threadId,
-        from: getH('From'),
-        subject: getH('Subject'),
-        date: getH('Date'),
-        snippet: meta.snippet || ''
-      });
-    } catch {
-      // ignore individual failures, keep others
-    }
-  }
-
-  return json(res, 200, {
-    ok: true,
-    label,
-    query,
-    count: results.length,
-    messages: results
-  });
-}
-
-async function actCalendarList(req, res, tokens) {
-  const b = parseBody(req);
-  const maxResults = Math.max(1, Math.min(Number(b.maxResults || 10), 20));
-
-  let timeMin = (b.timeMin || '').toString().trim();
-  let timeMax = (b.timeMax || '').toString().trim();
-
-  if (!timeMin) {
-    timeMin = new Date().toISOString();
-  }
-  if (!timeMax) {
-    const d = new Date();
-    d.setDate(d.getDate() + 7); // default: next 7 days
-    timeMax = d.toISOString();
-  }
-
-  const out = await withRefresh(tokens, res, req, t =>
-    calendarList(t, timeMin, timeMax, maxResults)
-  );
-  if (!out.ok) {
-    return json(res, out.status, { error: 'Calendar list failed', details: out.data });
-  }
-
-  const events = (out.data.items || []).map(ev => ({
-    id: ev.id,
-    summary: ev.summary || '',
-    start: ev.start?.dateTime || ev.start?.date || null,
-    end: ev.end?.dateTime || ev.end?.date || null,
-    location: ev.location || '',
-    status: ev.status || ''
-  }));
-
-  return json(res, 200, {
-    ok: true,
-    timeMin,
-    timeMax,
-    count: events.length,
-    events
-  });
-}
-
-async function actGmailList(req, res, tokens) {
-  const b = parseBody(req);
-  const label = (b.label || '').toString().trim();        // e.g. 'INBOX'
+  const label = (b.label || '').toString().trim();
   const maxResults = Number(b.maxResults || 5);
 
   const out = await withRefresh(tokens, res, req, t =>
@@ -569,7 +462,6 @@ async function actCalendarList(req, res, tokens) {
     events,
   });
 }
-
 
 // --- Web Search using SerpAPI ---
 async function actWebSearch(req, res /*, tokens */) {
@@ -606,8 +498,17 @@ async function actWebSearch(req, res /*, tokens */) {
   return json(res, 200, { ok: true, results });
 }
 
+// ---- Drive list root (must be at top-level, not inside handler)
+async function actDriveListRoot(req, res, tokens) {
+  const out = await withRefresh(tokens, res, req, t =>
+    driveSearch(t, "'root' in parents and trashed = false", "files(id,name,mimeType,modifiedTime)", 200)
+  );
+  if (!out.ok) return json(res, out.status, { error: 'Drive root list failed', details: out.data });
+  return json(res, 200, { ok: true, files: out.data.files || [] });
+}
 
-export default async function handler(req, res) {
+// CommonJS export so Node can load this file without ESM config
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -628,14 +529,6 @@ export default async function handler(req, res) {
   };
   const action = alias[raw] || raw;
 
-async function actDriveListRoot(req, res, tokens) {
-  const out = await withRefresh(tokens, res, req, t =>
-    driveSearch(t, "'root' in parents and trashed = false", "files(id,name,mimeType,modifiedTime)", 200)
-  );
-  if (!out.ok) return json(res, out.status, { error: 'Drive root list failed', details: out.data });
-  return json(res, 200, { ok: true, files: out.data.files || [] });
-}
-  
   try {
     if (action === 'drive.search')      return await actDriveSearch(req, res, tokens);
     if (action === 'docs.read')         return await actDocsRead(req, res, tokens);
@@ -643,18 +536,21 @@ async function actDriveListRoot(req, res, tokens) {
     if (action === 'sheets.read')       return await actSheetsRead(req, res, tokens);
     if (action === 'sheets.appendrow')  return await actSheetsAppendRow(req, res, tokens);
     if (action === 'sheets.updatecell') return await actSheetsUpdateCell(req, res, tokens);
-    if (action === 'drive.listroot')   return await actDriveListRoot(req, res, tokens);
-    if (action === 'gmail.list')        return await actGmailList(req, res, tokens);     
-    if (action === 'calendar.list')     return await actCalendarList(req, res, tokens); 
-    if (action === 'web.search') return await actWebSearch(req, res, tokens);
+    if (action === 'drive.listroot')    return await actDriveListRoot(req, res, tokens);
+    if (action === 'gmail.list')        return await actGmailList(req, res, tokens);
+    if (action === 'calendar.list')     return await actCalendarList(req, res, tokens);
+    if (action === 'web.search')        return await actWebSearch(req, res, tokens);
 
-    
     return json(res, 400, {
       error: 'Unknown or missing action.',
-      allowed: ['drive.search','docs.read','docs.createappend','sheets.read','sheets.appendrow','sheets.updatecell','drive.listroot','gmail.list','calendar.list','web.search']
+      allowed: [
+        'drive.search','docs.read','docs.createappend',
+        'sheets.read','sheets.appendrow','sheets.updatecell',
+        'drive.listroot','gmail.list','calendar.list','web.search'
+      ]
     });
   } catch (e) {
     if (e?.status && e?.body) return json(res, e.status, e.body);
     return json(res, 500, { error: 'Workspace handler error', details: String(e?.message || e) });
   }
-}
+};
