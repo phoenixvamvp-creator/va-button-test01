@@ -266,41 +266,40 @@
     }
 
     async function sendResponseInstructions(text, sourceHint) {
-  if (!dc || dc.readyState !== 'open') {
-    log('[WARN] DC not open; cannot send response.create');
-    return;
-  }
+      if (!dc || dc.readyState !== 'open') {
+        log('[WARN] DC not open; cannot send response.create');
+        return;
+      }
 
-  const payloadText = sourceHint
-    ? (
-        'You just received JSON data from the tool "' + sourceHint + '". ' +
-        'Use ONLY this data and the conversation so far to answer Rijk. ' +
-        'If it looks like an error, or if there is missing information, say that clearly and DO NOT guess or invent any details. ' +
-        'Here is the JSON:\n' + text
-      )
-    : text;
+      const payloadText = sourceHint
+        ? (
+            'You just received JSON data from the tool "' + sourceHint + '". ' +
+            'Use ONLY this data and the conversation so far to answer Rijk. ' +
+            'If it looks like an error, or if there is missing information, say that clearly and DO NOT guess or invent any details. ' +
+            'Here is the JSON:\n' + text
+          )
+        : text;
 
-  if (window.__responseActive) {
-    window.__pendingToolResults.push({ text: payloadText });
-    log('[INFO] response active — queued tool result');
-    return;
-  }
+      if (window.__responseActive) {
+        window.__pendingToolResults.push({ text: payloadText });
+        log('[INFO] response active — queued tool result');
+        return;
+      }
 
-  try {
-    window.__waitingForResponseId = true;
-    setResponseActive(true);
-    dc.send(JSON.stringify({
-      type: 'response.create',
-      response: { instructions: payloadText }
-    }));
-    log('[DC=>] response.create (tool output sent; source=' + (sourceHint || 'unknown') + ')');
-  } catch (e) {
-    log('[ERR] sendResponseInstructions send failed:', e?.message || e);
-    setResponseActive(false);
-    window.__waitingForResponseId = false;
-  }
-}
-
+      try {
+        window.__waitingForResponseId = true;
+        setResponseActive(true);
+        dc.send(JSON.stringify({
+          type: 'response.create',
+          response: { instructions: payloadText }
+        }));
+        log('[DC=>] response.create (tool output sent; source=' + (sourceHint || 'unknown') + ')');
+      } catch (e) {
+        log('[ERR] sendResponseInstructions send failed:', e?.message || e);
+        setResponseActive(false);
+        window.__waitingForResponseId = false;
+      }
+    }
 
     function flushPendingToolResults() {
       if (!dc || dc.readyState !== 'open') {
@@ -478,10 +477,17 @@
                   'When Rijk asks about his email, calendar, or Google files, you MUST call the appropriate tool first and base your answer only on that tool result and what Rijk has told you in this conversation. ' +
                   'If a tool returns an error or no data, you must explain that honestly and NOT guess or fill in missing details. ' +
                   'It is always better to say “I don’t know” or “I cannot access that” than to give a wrong answer. ' +
+                  'Calendar booking rules: when Rijk asks you to create/modify/delete a calendar event, you must collect the required details before calling calendar tools. ' +
+                  'Required for creating an event: date + start time, duration (or end time), and a short title/summary (what/for who). Location is strongly preferred. ' +
+                  'If any required detail is missing or ambiguous, ask a clarifying question instead of guessing. ' +
+                  'If Rijk specifies a color name like "tangerine", pass it through as color; if no color is given, omit it. ' +
                   'You are a Phoenix Virtual Assistant, designed to help people deal with many administrative tasks, prioritizing voice-first interaction. ' +
                   'Do not discuss adult content, sexuality, terrorism, or gratuitous violence. ' +
                   'Be concise, factual, and avoid flattery.' +
-                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets/Gmail/Calendar, or external web search. Use gmail_read when Rijk asks about his email, and calendar_read when he asks about his schedule or upcoming events.'
+                  'Prefer tools over free-text answers for anything involving Drive/Docs/Sheets/Gmail/Calendar, or external web search. ' +
+                  'Use gmail_read when Rijk asks about his email. ' +
+                  'Use calendar_read when he asks to view events. ' +
+                  'Use calendar_create / calendar_update / calendar_delete when he asks to book, change, or cancel events.'
               }
             };
             try {
@@ -571,8 +577,8 @@
                       cell: (args.cell || '').toString(),
                       value: args.value
                     };
-                    
-                                    } else if (name === 'web_search') {
+
+                  } else if (name === 'web_search') {
                     url = '/api/workspace.js?action=web.search';
                     body = {
                       query: (args.query || '').toString(),
@@ -580,16 +586,18 @@
                       site: (args.site || '').toString(),
                       freshnessDays: args.freshnessDays || 0
                     };
+
                   } else if (name === 'drive_listroot') {
                     url = '/api/workspace.js?action=drive.listroot';
                     body = {};
-                    
-                      } else if (name === 'gmail_read') {
+
+                  } else if (name === 'gmail_read') {
                     url = '/api/workspace.js?action=gmail.list';
                     body = {
                       label: (args.label || 'INBOX').toString(),
                       maxResults: args.maxResults || 5
                     };
+
                   } else if (name === 'calendar_read') {
                     url = '/api/workspace.js?action=calendar.list';
                     body = {
@@ -598,11 +606,38 @@
                       timeMax: (args.timeMax || '').toString()
                     };
 
-                    
+                  // ✅ NEW: Calendar create/update/delete
+                  } else if (name === 'calendar_create') {
+                    url = '/api/workspace.js?action=calendar.create';
+                    body = {
+                      summary: (args.summary || '').toString(),
+                      description: (args.description || '').toString(),
+                      location: (args.location || '').toString(),
+                      start: (args.start || '').toString(),               // ISO string preferred
+                      end: (args.end || '').toString(),                   // optional
+                      durationMinutes: args.durationMinutes || args.duration || 60,
+                      color: (args.color || '').toString()                // e.g. "tangerine" or "6"
+                    };
+                  } else if (name === 'calendar_update') {
+                    url = '/api/workspace.js?action=calendar.update';
+                    body = {
+                      eventId: (args.eventId || '').toString(),
+                      summary: (args.summary ?? undefined),
+                      description: (args.description ?? undefined),
+                      location: (args.location ?? undefined),
+                      start: (args.start || '').toString(),               // optional
+                      end: (args.end || '').toString(),                   // optional
+                      durationMinutes: args.durationMinutes || args.duration,
+                      color: (args.color || '').toString()
+                    };
+                  } else if (name === 'calendar_delete') {
+                    url = '/api/workspace.js?action=calendar.delete';
+                    body = {
+                      eventId: (args.eventId || '').toString()
+                    };
+
                   } else {
                     const out = { error: `Unsupported tool: ${name}` };
-
-                    
                     await sendResponseInstructions(JSON.stringify(out));
                     return;
                   }
@@ -729,7 +764,7 @@
                         required: ['fileName','cell']
                       }
                     },
-                                        {
+                    {
                       type: 'function',
                       name: 'web_search',
                       description: 'Perform a web search via SerpAPI and return summarized results.',
@@ -744,7 +779,6 @@
                         required: ['query']
                       }
                     },
-                    
                     {
                       type: 'function',
                       name: 'gmail_read',
@@ -771,10 +805,58 @@
                         },
                         required: []
                       }
+                    },
+
+                    /* ✅ NEW: Calendar write tools */
+                    {
+                      type: 'function',
+                      name: 'calendar_create',
+                      description: 'Create a new Google Calendar event on the primary calendar.',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          summary: { type: 'string', description: 'Short title, e.g. "Client: John - Sea Point"' },
+                          description: { type: 'string', description: 'Optional extra details' },
+                          location: { type: 'string', description: 'Optional location' },
+                          start: { type: 'string', description: 'Start date-time as ISO string (preferred)' },
+                          end: { type: 'string', description: 'Optional end date-time ISO string' },
+                          durationMinutes: { type: 'integer', description: 'Duration in minutes if end not provided' },
+                          color: { type: 'string', description: 'Optional color name like "tangerine" or colorId' }
+                        },
+                        required: ['summary','start']
+                      }
+                    },
+                    {
+                      type: 'function',
+                      name: 'calendar_update',
+                      description: 'Update an existing Google Calendar event (primary calendar).',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          eventId: { type: 'string', description: 'Google Calendar event ID (required)' },
+                          summary: { type: 'string', description: 'Optional new title' },
+                          description: { type: 'string', description: 'Optional new description' },
+                          location: { type: 'string', description: 'Optional new location' },
+                          start: { type: 'string', description: 'Optional new start ISO date-time' },
+                          end: { type: 'string', description: 'Optional new end ISO date-time' },
+                          durationMinutes: { type: 'integer', description: 'Optional duration in minutes (used if start provided and end omitted)' },
+                          color: { type: 'string', description: 'Optional color name like "tangerine" or colorId' }
+                        },
+                        required: ['eventId']
+                      }
+                    },
+                    {
+                      type: 'function',
+                      name: 'calendar_delete',
+                      description: 'Delete an existing Google Calendar event (primary calendar).',
+                      parameters: {
+                        type: 'object',
+                        properties: {
+                          eventId: { type: 'string', description: 'Google Calendar event ID (required)' }
+                        },
+                        required: ['eventId']
+                      }
                     }
-
-
-                    
                   ]
                 }
               };
