@@ -18,7 +18,9 @@ function fail(res, status, body) {
 
 function parseBody(req) {
   if (!req.body) return {};
-  if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
+  if (typeof req.body === 'string') {
+    try { return JSON.parse(req.body); } catch { return {}; }
+  }
   return req.body;
 }
 
@@ -176,7 +178,7 @@ async function gmailList(accessToken, { label, maxResults }) {
   return { ok: true, status: 200, data: { messages: results } };
 }
 
-// ---- Calendar helpers
+// ---- Calendar helpers (read)
 async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
   const now = new Date();
   const defaultTimeMin = now.toISOString();
@@ -205,108 +207,28 @@ async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
   return { ok: true, status: 200, data: { events } };
 }
 
-async function actCalendarCreate(req, res, tokens) {
-  const b = parseBody(req);
-  const summary = (b.summary || '').toString().trim();
-  const start = (b.start || '').toString().trim();
-
-  if (!summary) return fail(res, 400, { error: 'summary is required' });
-  if (!start) return fail(res, 400, { error: 'start is required (ISO or parseable date string)' });
-
-  const out = await withRefresh(tokens, res, req, t =>
-    calendarCreate(t, {
-      summary,
-      description: b.description,
-      location: b.location,
-      start: b.start,
-      end: b.end,
-      durationMinutes: b.durationMinutes,
-      colorId: b.color || b.colorId, // allow "color":"tangerine"
-    })
-  );
-  if (!out.ok) return fail(res, out.status, { error: 'Calendar create failed', details: out.data });
-
-  return json(res, 200, {
-    ok: true,
-    event: {
-      id: out.data.id,
-      summary: out.data.summary || '',
-      start: out.data.start?.dateTime || out.data.start?.date || null,
-      end: out.data.end?.dateTime || out.data.end?.date || null,
-      location: out.data.location || '',
-      colorId: out.data.colorId || null,
-      htmlLink: out.data.htmlLink || '',
-    }
-  });
-}
-
-async function actCalendarUpdate(req, res, tokens) {
-  const b = parseBody(req);
-  const eventId = (b.eventId || '').toString().trim();
-  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
-
-  const out = await withRefresh(tokens, res, req, t =>
-    calendarUpdate(t, {
-      eventId,
-      summary: b.summary,
-      description: b.description,
-      location: b.location,
-      start: b.start,
-      end: b.end,
-      durationMinutes: b.durationMinutes,
-      colorId: b.color || b.colorId,
-    })
-  );
-  if (!out.ok) return fail(res, out.status, { error: 'Calendar update failed', details: out.data });
-
-  return json(res, 200, {
-    ok: true,
-    event: {
-      id: out.data.id,
-      summary: out.data.summary || '',
-      start: out.data.start?.dateTime || out.data.start?.date || null,
-      end: out.data.end?.dateTime || out.data.end?.date || null,
-      location: out.data.location || '',
-      colorId: out.data.colorId || null,
-      htmlLink: out.data.htmlLink || '',
-    }
-  });
-}
-
-async function actCalendarDelete(req, res, tokens) {
-  const b = parseBody(req);
-  const eventId = (b.eventId || '').toString().trim();
-  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
-
-  const out = await withRefresh(tokens, res, req, t => calendarDelete(t, { eventId }));
-  if (!out.ok) return fail(res, out.status, { error: 'Calendar delete failed', details: out.data });
-
-  return json(res, 200, { ok: true, deleted: true, eventId });
-}
-
-
 // ---- Calendar write helpers
 const CAL_EVENT_COLOR_NAME_TO_ID = {
   // Google UI names
-  'lavender': '1',
-  'sage': '2',
-  'grape': '3',
-  'flamingo': '4',
-  'banana': '5',
-  'tangerine': '6', // Tangerine is colorId "6" :contentReference[oaicite:2]{index=2}
-  'peacock': '7',
-  'graphite': '8',
-  'blueberry': '9',
-  'basil': '10',
-  'tomato': '11',
+  lavender: '1',
+  sage: '2',
+  grape: '3',
+  flamingo: '4',
+  banana: '5',
+  tangerine: '6', // Tangerine colorId is "6"
+  peacock: '7',
+  graphite: '8',
+  blueberry: '9',
+  basil: '10',
+  tomato: '11',
   // Allow plain words
-  'orange': '6',
-  'yellow': '5',
-  'red': '11',
-  'green': '10',
-  'blue': '9',
-  'gray': '8',
-  'grey': '8',
+  orange: '6',
+  yellow: '5',
+  red: '11',
+  green: '10',
+  blue: '9',
+  gray: '8',
+  grey: '8',
 };
 
 function toIsoOrNull(s) {
@@ -320,7 +242,6 @@ function normalizeColorId(colorNameOrId) {
   if (colorNameOrId == null) return undefined;
   const v = String(colorNameOrId).trim();
   if (!v) return undefined;
-  // If user passes an id "1".."11"
   if (/^(1|2|3|4|5|6|7|8|9|10|11)$/.test(v)) return v;
   const key = v.toLowerCase();
   return CAL_EVENT_COLOR_NAME_TO_ID[key];
@@ -328,7 +249,9 @@ function normalizeColorId(colorNameOrId) {
 
 async function calendarCreate(accessToken, { summary, description, location, start, end, durationMinutes, colorId }) {
   const startIso = toIsoOrNull(start);
-  if (!startIso) return { ok: false, status: 400, data: { error: 'Invalid or missing start (must be ISO or parseable date string)' } };
+  if (!startIso) {
+    return { ok: false, status: 400, data: { error: 'Invalid or missing start (must be ISO or parseable date string)' } };
+  }
 
   let endIso = toIsoOrNull(end);
   if (!endIso) {
@@ -339,11 +262,12 @@ async function calendarCreate(accessToken, { summary, description, location, sta
 
   const body = {
     summary: (summary || '').toString(),
-    description: (description || '').toString(),
-    location: (location || '').toString(),
+    description: description != null ? String(description) : '',
+    location: location != null ? String(location) : '',
     start: { dateTime: startIso },
     end: { dateTime: endIso },
   };
+
   const cId = normalizeColorId(colorId);
   if (cId) body.colorId = cId;
 
@@ -352,6 +276,7 @@ async function calendarCreate(accessToken, { summary, description, location, sta
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
@@ -379,11 +304,15 @@ async function calendarUpdate(accessToken, { eventId, summary, description, loca
   const cId = normalizeColorId(colorId);
   if (cId) patch.colorId = cId;
 
-  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
+  const r = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }
+  );
+
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
@@ -391,27 +320,31 @@ async function calendarUpdate(accessToken, { eventId, summary, description, loca
 async function calendarDelete(accessToken, { eventId }) {
   if (!eventId) return { ok: false, status: 400, data: { error: 'eventId is required' } };
 
-  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const r = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
 
   // Delete often returns empty body
   const ok = r.ok;
   return { ok, status: r.status, data: ok ? { deleted: true } : { error: 'Delete failed' } };
 }
 
-
 // ---- Sheets helpers
 async function sheetsRead(accessToken, spreadsheetId, range) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   const data = await r.json();
   return { ok: r.ok, status: r.status, data };
 }
 
 async function sheetsAppend(accessToken, spreadsheetId, range, values) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
   const r = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -422,7 +355,8 @@ async function sheetsAppend(accessToken, spreadsheetId, range, values) {
 }
 
 async function sheetsUpdateCell(accessToken, spreadsheetId, range, value) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
   const r = await fetch(url, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -682,6 +616,85 @@ async function actCalendarList(req, res, tokens) {
   return json(res, 200, { ok: true, count: events.length, events });
 }
 
+async function actCalendarCreate(req, res, tokens) {
+  const b = parseBody(req);
+  const summary = (b.summary || '').toString().trim();
+  const start = (b.start || '').toString().trim();
+
+  if (!summary) return fail(res, 400, { error: 'summary is required' });
+  if (!start) return fail(res, 400, { error: 'start is required (ISO or parseable date string)' });
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarCreate(t, {
+      summary,
+      description: b.description,
+      location: b.location,
+      start: b.start,
+      end: b.end,
+      durationMinutes: b.durationMinutes,
+      colorId: b.color || b.colorId, // allow "color":"tangerine"
+    })
+  );
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar create failed', details: out.data });
+
+  return json(res, 200, {
+    ok: true,
+    event: {
+      id: out.data.id,
+      summary: out.data.summary || '',
+      start: out.data.start?.dateTime || out.data.start?.date || null,
+      end: out.data.end?.dateTime || out.data.end?.date || null,
+      location: out.data.location || '',
+      colorId: out.data.colorId || null,
+      htmlLink: out.data.htmlLink || '',
+    }
+  });
+}
+
+async function actCalendarUpdate(req, res, tokens) {
+  const b = parseBody(req);
+  const eventId = (b.eventId || '').toString().trim();
+  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarUpdate(t, {
+      eventId,
+      summary: b.summary,
+      description: b.description,
+      location: b.location,
+      start: b.start,
+      end: b.end,
+      durationMinutes: b.durationMinutes,
+      colorId: b.color || b.colorId,
+    })
+  );
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar update failed', details: out.data });
+
+  return json(res, 200, {
+    ok: true,
+    event: {
+      id: out.data.id,
+      summary: out.data.summary || '',
+      start: out.data.start?.dateTime || out.data.start?.date || null,
+      end: out.data.end?.dateTime || out.data.end?.date || null,
+      location: out.data.location || '',
+      colorId: out.data.colorId || null,
+      htmlLink: out.data.htmlLink || '',
+    }
+  });
+}
+
+async function actCalendarDelete(req, res, tokens) {
+  const b = parseBody(req);
+  const eventId = (b.eventId || '').toString().trim();
+  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
+
+  const out = await withRefresh(tokens, res, req, t => calendarDelete(t, { eventId }));
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar delete failed', details: out.data });
+
+  return json(res, 200, { ok: true, deleted: true, eventId });
+}
+
 // --- Web Search using SerpAPI ---
 async function actWebSearch(req, res /*, tokens */) {
   const b = parseBody(req);
@@ -733,9 +746,9 @@ module.exports = async function handler(req, res) {
 
   const raw = ((req.query.action || req.query.op || '') + '').toLowerCase();
   const alias = {
-    'read_by_search': 'sheets.read',
-    'append': 'sheets.appendrow',
-    'doc_append': 'docs.createappend'
+    read_by_search: 'sheets.read',
+    append: 'sheets.appendrow',
+    doc_append: 'docs.createappend'
   };
   const action = alias[raw] || raw;
 
@@ -754,13 +767,15 @@ module.exports = async function handler(req, res) {
     if (action === 'calendar.delete')   return await actCalendarDelete(req, res, tokens);
     if (action === 'web.search')        return await actWebSearch(req, res, tokens);
 
+    // FIX: include the new calendar actions here so the error message matches reality.
     return fail(res, 400, {
       error: 'Unknown or missing action.',
       allowed: [
-        'drive.search','drive.listroot',
-        'docs.read','docs.createappend',
-        'sheets.read','sheets.appendrow','sheets.updatecell',
-        'gmail.list','calendar.list',
+        'drive.search', 'drive.listroot',
+        'docs.read', 'docs.createappend',
+        'sheets.read', 'sheets.appendrow', 'sheets.updatecell',
+        'gmail.list',
+        'calendar.list', 'calendar.create', 'calendar.update', 'calendar.delete',
         'web.search'
       ]
     });
