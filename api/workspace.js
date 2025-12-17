@@ -749,6 +749,9 @@ module.exports = async function handler(req, res) {
     if (action === 'sheets.updatecell') return await actSheetsUpdateCell(req, res, tokens);
     if (action === 'gmail.list')        return await actGmailList(req, res, tokens);
     if (action === 'calendar.list')     return await actCalendarList(req, res, tokens);
+    if (action === 'calendar.create')   return await actCalendarCreate(req, res, tokens);
+    if (action === 'calendar.update')   return await actCalendarUpdate(req, res, tokens);
+    if (action === 'calendar.delete')   return await actCalendarDelete(req, res, tokens);
     if (action === 'web.search')        return await actWebSearch(req, res, tokens);
 
     return fail(res, 400, {
