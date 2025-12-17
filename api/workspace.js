@@ -205,6 +205,86 @@ async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
   return { ok: true, status: 200, data: { events } };
 }
 
+async function actCalendarCreate(req, res, tokens) {
+  const b = parseBody(req);
+  const summary = (b.summary || '').toString().trim();
+  const start = (b.start || '').toString().trim();
+
+  if (!summary) return fail(res, 400, { error: 'summary is required' });
+  if (!start) return fail(res, 400, { error: 'start is required (ISO or parseable date string)' });
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarCreate(t, {
+      summary,
+      description: b.description,
+      location: b.location,
+      start: b.start,
+      end: b.end,
+      durationMinutes: b.durationMinutes,
+      colorId: b.color || b.colorId, // allow "color":"tangerine"
+    })
+  );
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar create failed', details: out.data });
+
+  return json(res, 200, {
+    ok: true,
+    event: {
+      id: out.data.id,
+      summary: out.data.summary || '',
+      start: out.data.start?.dateTime || out.data.start?.date || null,
+      end: out.data.end?.dateTime || out.data.end?.date || null,
+      location: out.data.location || '',
+      colorId: out.data.colorId || null,
+      htmlLink: out.data.htmlLink || '',
+    }
+  });
+}
+
+async function actCalendarUpdate(req, res, tokens) {
+  const b = parseBody(req);
+  const eventId = (b.eventId || '').toString().trim();
+  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
+
+  const out = await withRefresh(tokens, res, req, t =>
+    calendarUpdate(t, {
+      eventId,
+      summary: b.summary,
+      description: b.description,
+      location: b.location,
+      start: b.start,
+      end: b.end,
+      durationMinutes: b.durationMinutes,
+      colorId: b.color || b.colorId,
+    })
+  );
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar update failed', details: out.data });
+
+  return json(res, 200, {
+    ok: true,
+    event: {
+      id: out.data.id,
+      summary: out.data.summary || '',
+      start: out.data.start?.dateTime || out.data.start?.date || null,
+      end: out.data.end?.dateTime || out.data.end?.date || null,
+      location: out.data.location || '',
+      colorId: out.data.colorId || null,
+      htmlLink: out.data.htmlLink || '',
+    }
+  });
+}
+
+async function actCalendarDelete(req, res, tokens) {
+  const b = parseBody(req);
+  const eventId = (b.eventId || '').toString().trim();
+  if (!eventId) return fail(res, 400, { error: 'eventId is required' });
+
+  const out = await withRefresh(tokens, res, req, t => calendarDelete(t, { eventId }));
+  if (!out.ok) return fail(res, out.status, { error: 'Calendar delete failed', details: out.data });
+
+  return json(res, 200, { ok: true, deleted: true, eventId });
+}
+
+
 // ---- Calendar write helpers
 const CAL_EVENT_COLOR_NAME_TO_ID = {
   // Google UI names
