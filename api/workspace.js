@@ -205,6 +205,123 @@ async function calendarList(accessToken, { maxResults, timeMin, timeMax }) {
   return { ok: true, status: 200, data: { events } };
 }
 
+// ---- Calendar write helpers
+const CAL_EVENT_COLOR_NAME_TO_ID = {
+  // Google UI names
+  'lavender': '1',
+  'sage': '2',
+  'grape': '3',
+  'flamingo': '4',
+  'banana': '5',
+  'tangerine': '6', // Tangerine is colorId "6" :contentReference[oaicite:2]{index=2}
+  'peacock': '7',
+  'graphite': '8',
+  'blueberry': '9',
+  'basil': '10',
+  'tomato': '11',
+  // Allow plain words
+  'orange': '6',
+  'yellow': '5',
+  'red': '11',
+  'green': '10',
+  'blue': '9',
+  'gray': '8',
+  'grey': '8',
+};
+
+function toIsoOrNull(s) {
+  const t = (s || '').toString().trim();
+  if (!t) return null;
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+function normalizeColorId(colorNameOrId) {
+  if (colorNameOrId == null) return undefined;
+  const v = String(colorNameOrId).trim();
+  if (!v) return undefined;
+  // If user passes an id "1".."11"
+  if (/^(1|2|3|4|5|6|7|8|9|10|11)$/.test(v)) return v;
+  const key = v.toLowerCase();
+  return CAL_EVENT_COLOR_NAME_TO_ID[key];
+}
+
+async function calendarCreate(accessToken, { summary, description, location, start, end, durationMinutes, colorId }) {
+  const startIso = toIsoOrNull(start);
+  if (!startIso) return { ok: false, status: 400, data: { error: 'Invalid or missing start (must be ISO or parseable date string)' } };
+
+  let endIso = toIsoOrNull(end);
+  if (!endIso) {
+    const mins = Number(durationMinutes || 60);
+    const dur = (!isFinite(mins) || mins <= 0) ? 60 : mins;
+    endIso = new Date(new Date(startIso).getTime() + dur * 60000).toISOString();
+  }
+
+  const body = {
+    summary: (summary || '').toString(),
+    description: (description || '').toString(),
+    location: (location || '').toString(),
+    start: { dateTime: startIso },
+    end: { dateTime: endIso },
+  };
+  const cId = normalizeColorId(colorId);
+  if (cId) body.colorId = cId;
+
+  const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data };
+}
+
+async function calendarUpdate(accessToken, { eventId, summary, description, location, start, end, durationMinutes, colorId }) {
+  if (!eventId) return { ok: false, status: 400, data: { error: 'eventId is required' } };
+
+  const patch = {};
+  if (summary != null) patch.summary = String(summary);
+  if (description != null) patch.description = String(description);
+  if (location != null) patch.location = String(location);
+
+  const startIso = toIsoOrNull(start);
+  let endIso = toIsoOrNull(end);
+
+  if (startIso) patch.start = { dateTime: startIso };
+  if (!endIso && startIso && durationMinutes != null) {
+    const mins = Number(durationMinutes);
+    if (isFinite(mins) && mins > 0) {
+      endIso = new Date(new Date(startIso).getTime() + mins * 60000).toISOString();
+    }
+  }
+  if (endIso) patch.end = { dateTime: endIso };
+
+  const cId = normalizeColorId(colorId);
+  if (cId) patch.colorId = cId;
+
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await r.json();
+  return { ok: r.ok, status: r.status, data };
+}
+
+async function calendarDelete(accessToken, { eventId }) {
+  if (!eventId) return { ok: false, status: 400, data: { error: 'eventId is required' } };
+
+  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  // Delete often returns empty body
+  const ok = r.ok;
+  return { ok, status: r.status, data: ok ? { deleted: true } : { error: 'Delete failed' } };
+}
+
+
 // ---- Sheets helpers
 async function sheetsRead(accessToken, spreadsheetId, range) {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
