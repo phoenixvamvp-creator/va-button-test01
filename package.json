@@ -1,0 +1,8 @@
+{
+  "name": "phoenix-va",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "googleapis": "^140.0.0"
+  }
+}
