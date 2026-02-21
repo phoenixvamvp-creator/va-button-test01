@@ -18,9 +18,22 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 3. Read the voice "handshake" (SDP) from your browser
-    const sdpOffer = await req.text();
+    // 3. Read the voice "handshake" (SDP) from your browser 
+    // We have to collect the data chunks because Node.js treats 'req' as a stream
+    let sdpOffer = '';
+    for await (const chunk of req) {
+      sdpOffer += chunk;
+    }
 
+    // 4. Send that handshake to Google's office
+    const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/sdp',
+      },
+      body: sdpOffer
+    });
     // 4. Send that handshake to Google's office instead of OpenAI's
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
       method: 'POST',
