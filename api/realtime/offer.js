@@ -10,13 +10,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Collect the stream chunks
+    // 1. Read the voice "handshake" (SDP) from the browser stream
     let sdpOffer = '';
     for await (const chunk of req) {
       sdpOffer += chunk;
     }
 
-    // Use the BUILT-IN fetch (no import needed)
+    // 2. Send the handshake to Google's Realtime API
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
       method: 'POST',
       headers: {
@@ -26,12 +26,19 @@ export default async function handler(req, res) {
       body: sdpOffer
     });
 
-    const text = await upstream.text();
+    if (!upstream.ok) {
+        const errorText = await upstream.text();
+        res.statusCode = upstream.status;
+        return res.end(`Google API Error: ${errorText}`);
+    }
+
+    // 3. Send the response back to your browser
+    const answerSdp = await upstream.text();
     res.setHeader('Content-Type', 'application/sdp');
-    res.status(upstream.status).send(text);
+    res.status(200).send(answerSdp);
 
   } catch (e) {
-    console.error(e);
+    console.error('Backend Error:', e);
     res.status(500).send(`Internal Error: ${e.message}`);
   }
 }
