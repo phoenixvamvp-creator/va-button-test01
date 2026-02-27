@@ -1,22 +1,21 @@
-// api/realtime/offer.js
-const MODEL = "gemini-1.5-flash"; 
+const MODEL = "gemini-1.5-flash";
 
 export default async function handler(req, res) {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY; 
-  
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
   if (req.method !== 'POST') {
-    res.statusCode = 405;
-    return res.end('Method Not Allowed');
+    res.status(405).send('Method Not Allowed');
+    return;
   }
 
   try {
-    // 1. Read the voice "handshake" (SDP) from the browser stream
+    // 1. Properly collect the SDP offer from the frontend
     let sdpOffer = '';
     for await (const chunk of req) {
       sdpOffer += chunk;
     }
 
-    // 2. Send the handshake to Google's Realtime API
+    // 2. One single call to Google
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
       method: 'POST',
       headers: {
@@ -27,18 +26,20 @@ export default async function handler(req, res) {
     });
 
     if (!upstream.ok) {
-        const errorText = await upstream.text();
-        res.statusCode = upstream.status;
-        return res.end(`Google API Error: ${errorText}`);
+      const errorText = await upstream.text();
+      console.error('Google API Error:', errorText);
+      res.status(upstream.status).send(errorText);
+      return;
     }
 
-    // 3. Send the response back to your browser
     const answerSdp = await upstream.text();
-    res.setHeader('Content-Type', 'application/sdp');
+    
+    // 3. Return the Answer SDP as plain text
+    res.setHeader('Content-Type', 'text/plain');
     res.status(200).send(answerSdp);
 
   } catch (e) {
-    console.error('Backend Error:', e);
+    console.error('Backend Crash:', e);
     res.status(500).send(`Internal Error: ${e.message}`);
   }
 }
