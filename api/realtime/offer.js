@@ -1,4 +1,5 @@
-const MODEL = "gemini-1.5-flash"; 
+// Ensure MODEL is defined
+const MODEL = "gemini-2.0-flash"; 
 
 export default async function handler(req, res) {
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY; 
@@ -8,16 +9,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Get the SDP from the frontend. 
-    // We use req.body directly because Vercel handles the stream for us.
     const sdpOffer = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
 
     if (!sdpOffer) {
-      return res.status(400).send('No SDP offer received from frontend');
+      return res.status(400).send('No SDP offer received');
     }
 
-    // 2. Talk to Google
-    // Note: We use the x-goog-api-key header which is more reliable for Gemini
+    // 1. Call Google's Realtime API
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
       method: 'POST',
       headers: {
@@ -33,14 +31,17 @@ export default async function handler(req, res) {
         return res.status(upstream.status).send(`Google rejected the request: ${errorText}`);
     }
 
-    const answerSdp = await upstream.text();
-    
-    // 3. Send the response back to the browser
-    res.setHeader('Content-Type', 'text/plain');
-    return res.status(200).send(answerSdp);
+    // 2. THIS WAS MISSING: Get the SDP Answer from Google
+    const sdpAnswer = await upstream.text();
+
+    // 3. Return the Answer to your frontend
+    // The frontend's 'fetch' in index.html is waiting for this exact string
+    return res.status(200)
+              .setHeader('Content-Type', 'application/sdp')
+              .send(sdpAnswer);
 
   } catch (e) {
-    console.error('Backend Crash:', e);
-    return res.status(500).send(`Server Error: ${e.message}`);
+    console.error('Server error:', e);
+    return res.status(500).send('Internal Server Error: ' + e.message);
   }
 }
