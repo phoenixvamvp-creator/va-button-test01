@@ -909,8 +909,8 @@
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
         await pc.setLocalDescription(offer);
 
-        // The specific fix for the 404/Line 912 issue
-        const res = await fetch('/api/realtime/offer.js', { 
+        // Remove the .js
+        const res = await fetch('/api/realtime/offer', { 
           method: 'POST',
           headers: { 'Content-Type': 'application/sdp' },
           body: offer.sdp
