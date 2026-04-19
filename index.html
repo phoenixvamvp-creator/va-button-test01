@@ -909,12 +909,9 @@
         const offer = await pc.createOffer({ offerToReceiveAudio: 1 });
         await pc.setLocalDescription(offer);
 
-        // Remove the .js
-        const res = await fetch('/api/realtime/offer', { 
-          method: 'POST',
-          headers: { 'Content-Type': 'application/sdp' },
-          body: offer.sdp
-        });
+        // New code
+        const res = await fetch('/api/realtime/session');
+        const { apiKey } = await res.json();
 
         if (!res.ok) {
           const errorMsg = await res.text();
