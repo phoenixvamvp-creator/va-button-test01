@@ -1,21 +1,35 @@
-// Ensure MODEL is defined
-const MODEL = "gemini-2.0-flash"; 
+const MODEL = "gemini-2.0-flash";
+
+export const config = {
+  api: {
+    bodyParser: false, // Essential: prevents Next.js from trying to parse the SDP as JSON
+  },
+};
 
 export default async function handler(req, res) {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY; 
-  
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
 
+  // 1. Read the raw request stream
+  let sdpOffer = '';
   try {
-    const sdpOffer = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
-
-    if (!sdpOffer) {
-      return res.status(400).send('No SDP offer received');
+    for await (const chunk of req) {
+      sdpOffer += chunk;
     }
+  } catch (err) {
+    console.error('Error reading request stream:', err);
+    return res.status(400).send('Error reading SDP offer');
+  }
 
-    // 1. Call Google's Realtime API
+  if (!sdpOffer || sdpOffer.trim() === "") {
+    return res.status(400).send('No SDP offer received');
+  }
+
+  try {
+    // 2. Relay the SDP to the Gemini Realtime API
     const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/openai/realtime?model=${MODEL}`, {
       method: 'POST',
       headers: {
@@ -26,16 +40,14 @@ export default async function handler(req, res) {
     });
 
     if (!upstream.ok) {
-        const errorText = await upstream.text();
-        console.error('Google API Error:', errorText);
-        return res.status(upstream.status).send(`Google rejected the request: ${errorText}`);
+      const errorText = await upstream.text();
+      console.error('Google API Error:', errorText);
+      return res.status(upstream.status).send(`Google API error: ${errorText}`);
     }
 
-    // 2. THIS WAS MISSING: Get the SDP Answer from Google
+    // 3. Send the Gemini Answer back to the frontend
     const sdpAnswer = await upstream.text();
-
-    // 3. Return the Answer to your frontend
-    // The frontend's 'fetch' in index.html is waiting for this exact string
+    
     return res.status(200)
               .setHeader('Content-Type', 'application/sdp')
               .send(sdpAnswer);
