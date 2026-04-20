@@ -233,7 +233,7 @@
 
     const setStatus = (s) => { statusEl.textContent = s; };
 
-    let pc = null, mic = null, dc = null, live = false;
+    let ws = null, mic = null, audioCtx = null, live = false;
 
     // Response state management (prevents overlapping tool-result responses)
     window.__responseActive = false;
@@ -266,7 +266,7 @@
     // Send tool output back to the model as "instructions"
     // Hard rule: if tool returns ok:false or invalid JSON, model must say so and not guess.
     async function sendToolResultToModel(rawText, sourceHint) {
-      if (!dc || dc.readyState !== 'open') {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         log('[WARN] DC not open; cannot send response.create');
         return;
       }
@@ -307,7 +307,7 @@
     }
 
     function flushPendingToolResults() {
-      if (!dc || dc.readyState !== 'open') {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         log('[WARN] DC not open; cannot flush pending tool results');
         return;
       }
@@ -326,7 +326,7 @@
     sendBtn.addEventListener('click', () => {
       const text = (inputEl.value || '').trim();
       if (!text) return;
-      if (!dc || dc.readyState !== 'open') {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
         log('[WARN] DataChannel not open yet; cannot send text.');
         return;
       }
@@ -359,31 +359,45 @@
         mic = stream;
         const micTrack = mic.getTracks()[0];
 
-        pc = new RTCPeerConnection();
-        pc.oniceconnectionstatechange = () => log('ICE:', pc.iceConnectionState);
-        pc.onconnectionstatechange = () => log('PC:', pc.connectionState);
-        pc.ontrack = (e) => {
-          log('[RT] ontrack: remote audio');
-          audioEl.srcObject = e.streams[0];
-          audioEl.play().catch(err => log('[AUDIO] play blocked:', err?.message || err));
-        };
+        // Setup AudioContext to capture raw PCM for Gemini
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = audioCtx.createMediaStreamSource(mic);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+        
+        processor.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcm16 = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            pcm16[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768)));
+          }
+          const buffer = new Uint8Array(pcm16.buffer);
+          let binary = '';
+          for (let i = 0; i < buffer.byteLength; i++) { binary += String.fromCharCode(buffer[i]); }
+          
+          ws.send(JSON.stringify({
+            realtime_input: {
+              media_chunks: [{ mime_type: "audio/pcm;rate=16000", data: btoa(binary) }]
+            }
+          }));
+        };
 
-        const tx = pc.addTransceiver('audio', { direction: 'sendrecv' });
-        try { await tx.sender.replaceTrack(micTrack); } catch {}
-        if (tx.sender.setStreams) { try { tx.sender.setStreams(mic); } catch {} }
-
-        dc = pc.createDataChannel('oai-events');
+        // Initialize WebSocket (Replace URL with your Gemini proxy endpoint)
+        ws = new WebSocket('ws://localhost:3000/api/gemini-realtime');
 
         // buffer of assistant text per response id
         const assistantTextBuffers = Object.create(null);
 
-        dc.onopen = () => {
-          log('[DC] open');
-          setSendReady(true);
-          setStatus('waiting-for-session');
-        };
+        ws.onopen = () => {
+          log('[WS] open');
+          setSendReady(true);
+          setStatus('waiting-for-session');
+        };
 
-        dc.onmessage = (evt) => {
+        ws.onmessage = (evt) => {
           let msg;
           try { msg = JSON.parse(evt.data); } catch { return; }
 
